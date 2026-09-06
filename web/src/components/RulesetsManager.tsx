@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Check,
   CheckCircle2,
@@ -89,7 +89,15 @@ export const RulesetsManager: React.FC<RulesetsManagerProps> = ({
   const [newGroupName, setNewGroupName] = useState('');
   const [newGroupType, setNewGroupType] = useState<'select' | 'urltest' | 'direct'>('select');
 
-  const availableOutbounds = proxyGroups.map(g => g.name);
+  const availableOutbounds = useMemo(() => {
+    const list = ['REJECT', ...proxyGroups.map(g => g.name)];
+    rulesList.forEach(r => {
+      if (r.outbound && !list.includes(r.outbound)) {
+        list.push(r.outbound);
+      }
+    });
+    return Array.from(new Set(list));
+  }, [proxyGroups, rulesList]);
 
   // Format rules to text for Full Text Editor
   const formatRulesToText = (rules: UnifiedRuleItem[]): string => {
@@ -304,7 +312,7 @@ export const RulesetsManager: React.FC<RulesetsManagerProps> = ({
           >
             <option value="all">全部分组去向</option>
             {availableOutbounds.map(ob => (
-              <option key={ob} value={ob}>{ob}</option>
+              <option key={ob} value={ob}>{ob === 'REJECT' ? '🛑 REJECT (拦截丢弃)' : ob}</option>
             ))}
           </select>
         </div>
@@ -407,7 +415,7 @@ export const RulesetsManager: React.FC<RulesetsManagerProps> = ({
                         className="w-full appearance-none pl-3 pr-8 py-1.5 bg-white border border-[#DFD9CF] rounded-xl text-xs font-semibold text-[#1F1E1D] focus:outline-none focus:border-[#CC785C] shadow-2xs cursor-pointer hover:border-[#CC785C]/60 transition-colors"
                       >
                         {availableOutbounds.map(ob => (
-                          <option key={ob} value={ob}>➔ {ob}</option>
+                          <option key={ob} value={ob}>{ob === 'REJECT' ? '🛑 REJECT' : `➔ ${ob}`}</option>
                         ))}
                       </select>
                       <ChevronDown className="w-3.5 h-3.5 text-[#8C877D] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -596,7 +604,7 @@ export const RulesetsManager: React.FC<RulesetsManagerProps> = ({
                   className="w-full px-3.5 py-2 claude-input rounded-xl text-xs"
                 >
                   {availableOutbounds.map(ob => (
-                    <option key={ob} value={ob}>➔ {ob}</option>
+                    <option key={ob} value={ob}>{ob === 'REJECT' ? '🛑 REJECT (拦截丢弃)' : `➔ ${ob}`}</option>
                   ))}
                 </select>
               </div>
@@ -657,7 +665,7 @@ export const RulesetsManager: React.FC<RulesetsManagerProps> = ({
                   className="w-full px-3.5 py-2 claude-input rounded-xl text-xs"
                 >
                   {availableOutbounds.map(ob => (
-                    <option key={ob} value={ob}>➔ {ob}</option>
+                    <option key={ob} value={ob}>{ob === 'REJECT' ? '🛑 REJECT (拦截丢弃)' : `➔ ${ob}`}</option>
                   ))}
                 </select>
               </div>
@@ -747,7 +755,7 @@ export const RulesetsManager: React.FC<RulesetsManagerProps> = ({
                     className="w-full px-3.5 py-2 claude-input rounded-xl text-xs font-semibold"
                   >
                     {availableOutbounds.map(ob => (
-                      <option key={ob} value={ob}>➔ {ob}</option>
+                      <option key={ob} value={ob}>{ob === 'REJECT' ? '🛑 REJECT (拦截丢弃)' : `➔ ${ob}`}</option>
                     ))}
                   </select>
                 </div>

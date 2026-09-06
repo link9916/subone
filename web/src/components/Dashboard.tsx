@@ -1319,7 +1319,8 @@ const ProfileEditModal: React.FC<ProfileEditModalProps> = ({
               <div className="space-y-2 pr-1">
                 {(config?.rulesList || []).map(rule => {
                   const isChecked = selectedRuleSet.has(rule.id);
-                  const isTargetGroupEnabled = selectedGroupSet.size === 0 || selectedGroupSet.has(`grp-${rule.outbound}`) || (config?.proxyGroups || []).some(g => g.name === rule.outbound && selectedGroupSet.has(g.id));
+                  const isBuiltinTarget = rule.outbound.toUpperCase() === 'REJECT' || rule.outbound.toUpperCase() === 'DIRECT' || rule.outbound === '🎯 本地直连';
+                  const isTargetGroupEnabled = isBuiltinTarget || selectedGroupSet.size === 0 || selectedGroupSet.has(`grp-${rule.outbound}`) || (config?.proxyGroups || []).some(g => g.name === rule.outbound && selectedGroupSet.has(g.id));
 
                   return (
                     <div

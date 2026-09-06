@@ -12,7 +12,11 @@ export function resolveSafeOutbound(target: string, availableGroups: Set<string>
   if (!t) return fallback;
   const upper = t.toUpperCase();
   if (upper === 'DIRECT' || upper === 'REJECT' || upper === 'GLOBAL' || upper === 'PASS' || t === '🎯 本地直连' || t === 'dns-out') {
-    return t;
+    return upper === 'REJECT' ? 'REJECT' : (upper === 'DIRECT' ? 'DIRECT' : t);
+  }
+  if (t === '🛑 REJECT' || t === '🛑 广告拦截' || t === '🛑 全局拦截') {
+    if (availableGroups.has(t)) return t;
+    return 'REJECT';
   }
   if (availableGroups.has(t)) {
     return t;
@@ -70,6 +74,14 @@ export function injectUnifiedToMihomo(
         name: grp.name,
         type: 'select',
         proxies: ['DIRECT'],
+      });
+      return;
+    }
+    if (grp.type === 'reject') {
+      generatedGroups.push({
+        name: grp.name,
+        type: 'select',
+        proxies: ['REJECT'],
       });
       return;
     }
@@ -273,6 +285,13 @@ export function injectUnifiedToSingbox(
       });
       return;
     }
+    if (grp.type === 'reject') {
+      groupOutbounds.push({
+        tag: grp.name,
+        type: 'block',
+      });
+      return;
+    }
 
     let outboundsList = grp.proxies ? [...grp.proxies] : [];
 
@@ -353,6 +372,14 @@ export function injectUnifiedToSingbox(
     groupOutbounds.push({
       tag: '🎯 本地直连',
       type: 'direct',
+    });
+  }
+
+  // Ensure REJECT always exists
+  if (!groupOutbounds.some(g => g.tag === 'REJECT' || g.type === 'block')) {
+    groupOutbounds.push({
+      tag: 'REJECT',
+      type: 'block',
     });
   }
 
@@ -532,26 +559,35 @@ export function injectUnifiedToSingbox(
   localRules.forEach(r => {
     const payloads = r.payload.split(/[,;\n]+/).map(s => s.trim()).filter(Boolean);
     const safeOutbound = resolveSafeOutbound(r.outbound, availableGroupNames, fallbackGroup);
+    const isReject = safeOutbound.toUpperCase() === 'REJECT';
     if (r.type === 'DOMAIN-SUFFIX') {
-      routeRules.push({ domain_suffix: payloads, outbound: safeOutbound });
+      routeRules.push(isReject ? { domain_suffix: payloads, action: 'reject' } : { domain_suffix: payloads, outbound: safeOutbound });
     } else if (r.type === 'DOMAIN-KEYWORD') {
-      routeRules.push({ domain_keyword: payloads, outbound: safeOutbound });
+      routeRules.push(isReject ? { domain_keyword: payloads, action: 'reject' } : { domain_keyword: payloads, outbound: safeOutbound });
     } else if (r.type === 'DOMAIN') {
-      routeRules.push({ domain: payloads, outbound: safeOutbound });
+      routeRules.push(isReject ? { domain: payloads, action: 'reject' } : { domain: payloads, outbound: safeOutbound });
     } else if (r.type === 'IP-CIDR') {
-      routeRules.push({ ip_cidr: payloads, outbound: safeOutbound });
+      routeRules.push(isReject ? { ip_cidr: payloads, action: 'reject' } : { ip_cidr: payloads, outbound: safeOutbound });
     } else if (r.type === 'GEOIP') {
-      routeRules.push({ geoip: payloads, outbound: safeOutbound });
+      routeRules.push(isReject ? { geoip: payloads, action: 'reject' } : { geoip: payloads, outbound: safeOutbound });
     }
   });
 
   remoteRules.forEach((r, idx) => {
     const tag = formatRuleTag(r, idx);
     const safeOutbound = resolveSafeOutbound(r.outbound, availableGroupNames, fallbackGroup);
-    routeRules.push({
-      rule_set: tag,
-      outbound: safeOutbound,
-    });
+    const isReject = safeOutbound.toUpperCase() === 'REJECT';
+    if (isReject) {
+      routeRules.push({
+        rule_set: tag,
+        action: 'reject',
+      });
+    } else {
+      routeRules.push({
+        rule_set: tag,
+        outbound: safeOutbound,
+      });
+    }
   });
 
 
@@ -635,6 +671,10 @@ export function injectUnifiedToLoon(
   proxyGroups.forEach(grp => {
     if (grp.type === 'direct') {
       groupLines.push(`${grp.name} = select, DIRECT`);
+      return;
+    }
+    if (grp.type === 'reject') {
+      groupLines.push(`${grp.name} = select, REJECT`);
       return;
     }
 
@@ -772,8 +812,8 @@ export function injectUnifiedToLoon(
   }
 
   // 4. Build [Rule]
-  const availableGroupNames = new Set(effectiveGroups.map(g => g.name));
-  const fallbackGroup = effectiveGroups.find(g => g.name === '🚀 节点选择')?.name || effectiveGroups[0]?.name || 'DIRECT';
+  const availableGroupNames = new Set(proxyGroups.map(g => g.name));
+  const fallbackGroup = proxyGroups.find(g => g.name === '🚀 节点选择')?.name || proxyGroups[0]?.name || 'DIRECT';
 
   const localRuleLines = localRules.flatMap(r => {
     const payloads = r.payload.split(/[,;\n]+/).map(p => p.trim()).filter(Boolean);

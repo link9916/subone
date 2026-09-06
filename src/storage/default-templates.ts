@@ -325,6 +325,16 @@ export const INITIAL_PROXY_GROUPS: ProxyGroupItem[] = [
 
 export const INITIAL_RULES_LIST: UnifiedRuleItem[] = [
   {
+    id: 'r-ads-all-remote',
+    name: '全量广告拦截 (Category-Ads-All)',
+    kind: 'remote',
+    type: 'RULE-SET',
+    payload: 'https://gh-proxy.com/https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/category-ads-all.srs',
+    format: 'binary',
+    outbound: 'REJECT',
+    enabled: true,
+  },
+  {
     id: 'r-private-ip',
     name: '局域网与内网 IP',
     kind: 'local',

@@ -121,7 +121,9 @@ export function adaptRulesetForLoon(r: UnifiedRuleItem, idx?: number): { tag: st
   const raw = (r.payload || '').toLowerCase();
   const cleanUrl = raw.replace(/https?:\/\/gh-proxy\.com\//g, '');
 
-  if (cleanUrl.includes('category-ai') || cleanUrl.includes('openai') || cleanUrl.includes('claude') || cleanUrl.includes('gemini')) {
+  if (cleanUrl.includes('category-ads') || cleanUrl.includes('ads') || cleanUrl.includes('advertising')) {
+    url = 'https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Loon/Advertising/Advertising.list';
+  } else if (cleanUrl.includes('category-ai') || cleanUrl.includes('openai') || cleanUrl.includes('claude') || cleanUrl.includes('gemini')) {
     url = 'https://raw.githubusercontent.com/Loon0x00/LoonLiteRules/main/proxy/Gemini.list';
   } else if (cleanUrl.includes('youtube')) {
     url = 'https://raw.githubusercontent.com/Loon0x00/LoonLiteRules/main/proxy/YouTube.list';

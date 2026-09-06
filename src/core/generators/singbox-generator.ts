@@ -118,10 +118,12 @@ export function nodeToSingboxOutbound(node: ProxyNode): any {
       insecure: Boolean(node.skipCertVerify),
       server_name: node.sni,
     };
-    if (node.obfs) {
+    const obfsType = node.obfs || node.raw?.obfs;
+    const obfsPassword = node.obfsPassword || node.raw?.['obfs-password'] || node.raw?.['obfs-opts']?.password;
+    if (obfsType && obfsPassword) {
       base.obfs = {
-        type: node.obfs,
-        password: node.obfsPassword,
+        type: obfsType,
+        password: obfsPassword,
       };
     }
     return base;

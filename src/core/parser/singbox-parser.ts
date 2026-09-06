@@ -99,6 +99,9 @@ export function parseSingboxJson(
         wsHeaders: ob.transport?.headers,
         grpcServiceName: ob.transport?.service_name,
 
+        obfs: ob.obfs?.type || ob.obfs,
+        obfsPassword: ob.obfs?.password || ob.obfs_password,
+
         raw: ob,
       };
 

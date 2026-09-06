@@ -72,11 +72,12 @@ export function parseClashYaml(
         udp: p.udp !== undefined ? Boolean(p.udp) : true,
         remoteDnsResolve: p['remote-dns-resolve'] !== undefined ? Boolean(p['remote-dns-resolve']) : undefined,
 
-        // Snell
+        // Snell & Hysteria2
         psk: p.psk || p.password,
         snellVersion: p.version ? Number(p.version) : undefined,
         obfs: p['obfs-opts']?.mode || p.obfs,
         obfsHost: p['obfs-opts']?.host || p['obfs-host'],
+        obfsPassword: p['obfs-password'] || p['obfs-opts']?.password || p.obfsPassword,
 
         flow: p.flow,
         packetEncoding: p['packet-encoding'],

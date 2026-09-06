@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Check,
   CheckCircle2,
@@ -54,9 +54,17 @@ export const RulesManager: React.FC<RulesManagerProps> = ({
   const [singleKind, setSingleKind] = useState<'local' | 'remote'>('local');
   const [singleType, setSingleType] = useState<any>('DOMAIN-SUFFIX');
   const [singlePayload, setSinglePayload] = useState('');
-  const [singleOutbound, setSingleOutbound] = useState(proxyGroups[0]?.name || '🎯 本地直连');
+  const [singleOutbound, setSingleOutbound] = useState('REJECT');
 
-  const availableOutbounds = proxyGroups.map(g => g.name);
+  const availableOutbounds = useMemo(() => {
+    const list = ['REJECT', ...proxyGroups.map(g => g.name)];
+    rulesList.forEach(r => {
+      if (r.outbound && !list.includes(r.outbound)) {
+        list.push(r.outbound);
+      }
+    });
+    return Array.from(new Set(list));
+  }, [proxyGroups, rulesList]);
 
   // Format rules to text for Full Text Editor
   const formatRulesToText = (rules: UnifiedRuleItem[]): string => {
@@ -255,7 +263,7 @@ export const RulesManager: React.FC<RulesManagerProps> = ({
             <option value="all">全部目标策略</option>
             {availableOutbounds.map(g => (
               <option key={g} value={g}>
-                {g}
+                {g === 'REJECT' ? '🛑 REJECT (拦截丢弃)' : g}
               </option>
             ))}
           </select>
@@ -327,11 +335,15 @@ export const RulesManager: React.FC<RulesManagerProps> = ({
                       <select
                         value={rule.outbound}
                         onChange={e => onUpdateRule(rule.id, { outbound: e.target.value })}
-                        className="w-full px-2.5 py-1 bg-white border border-[#E8E4DC] hover:border-[#CC785C] rounded-lg text-xs font-semibold text-[#1F1E1D] focus:outline-none focus:border-[#CC785C] transition-colors"
+                        className={`w-full px-2.5 py-1 bg-white border rounded-lg text-xs font-semibold focus:outline-none focus:border-[#CC785C] transition-colors ${
+                          rule.outbound === 'REJECT'
+                            ? 'border-red-200 text-red-600 bg-red-50/50'
+                            : 'border-[#E8E4DC] text-[#1F1E1D] hover:border-[#CC785C]'
+                        }`}
                       >
                         {availableOutbounds.map(g => (
                           <option key={g} value={g}>
-                            {g}
+                            {g === 'REJECT' ? '🛑 REJECT' : g}
                           </option>
                         ))}
                       </select>
@@ -517,7 +529,7 @@ export const RulesManager: React.FC<RulesManagerProps> = ({
               </div>
 
               <div className="space-y-1">
-                <label className="font-semibold text-[#1F1E1D]">目标策略组</label>
+                <label className="font-semibold text-[#1F1E1D]">目标策略组 / 出口</label>
                 <select
                   value={singleOutbound}
                   onChange={e => setSingleOutbound(e.target.value)}
@@ -525,7 +537,7 @@ export const RulesManager: React.FC<RulesManagerProps> = ({
                 >
                   {availableOutbounds.map(g => (
                     <option key={g} value={g}>
-                      {g}
+                      {g === 'REJECT' ? '🛑 REJECT (拦截丢弃)' : g}
                     </option>
                   ))}
                 </select>
@@ -642,7 +654,7 @@ export const RulesManager: React.FC<RulesManagerProps> = ({
               </div>
 
               <div className="space-y-1">
-                <label className="font-semibold text-[#1F1E1D]">目标策略组</label>
+                <label className="font-semibold text-[#1F1E1D]">目标策略组 / 出口</label>
                 <select
                   value={editOutbound}
                   onChange={e => setEditOutbound(e.target.value)}
@@ -650,7 +662,7 @@ export const RulesManager: React.FC<RulesManagerProps> = ({
                 >
                   {availableOutbounds.map(g => (
                     <option key={g} value={g}>
-                      {g}
+                      {g === 'REJECT' ? '🛑 REJECT (拦截丢弃)' : g}
                     </option>
                   ))}
                 </select>
