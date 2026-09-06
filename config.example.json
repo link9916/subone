@@ -1,0 +1,5 @@
+{
+  "port": 3456,
+  "adminPassword": "YOUR_ADMIN_PASSWORD_HERE",
+  "subToken": "YOUR_RANDOM_SECRET_TOKEN_HERE"
+}

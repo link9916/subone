@@ -1,0 +1,925 @@
+import yaml from 'js-yaml';
+import { ProxyGroupItem, UnifiedRuleItem, ProxyNode, SubscriptionSource } from '../../types/index.js';
+import {
+  adaptRulesetForSingbox,
+  adaptRulesetForMihomo,
+  adaptRulesetForLoon,
+  formatRuleTag,
+} from './ruleset-adapter.js';
+
+export function parseDnsConfig(dnsConfig?: any): any {
+  if (!dnsConfig) return null;
+  if (typeof dnsConfig === 'string') {
+    try {
+      const trimmed = dnsConfig.trim();
+      return trimmed.startsWith('{') ? JSON.parse(trimmed) : yaml.load(trimmed);
+    } catch {
+      return null;
+    }
+  }
+  if (typeof dnsConfig === 'object') {
+    if (dnsConfig.rawText) {
+      try {
+        const trimmed = dnsConfig.rawText.trim();
+        return trimmed.startsWith('{') ? JSON.parse(trimmed) : yaml.load(trimmed);
+      } catch {}
+    }
+    return dnsConfig.singbox || dnsConfig.clash || dnsConfig;
+  }
+  return null;
+}
+
+export function injectUnifiedToMihomo(
+  doc: any,
+  nodes: ProxyNode[],
+  proxyGroups: ProxyGroupItem[],
+  rulesList: UnifiedRuleItem[],
+  sources: SubscriptionSource[] = [],
+  dnsConfig?: any
+): any {
+  if (!doc || typeof doc !== 'object') doc = {};
+
+  const customDns = parseDnsConfig(dnsConfig);
+  if (customDns) {
+    if (customDns.nameserver || customDns.fallback || customDns['default-nameserver'] || customDns['enhanced-mode']) {
+      doc.dns = { ...(doc.dns || {}), ...customDns };
+    } else if (Array.isArray(customDns.servers)) {
+      // Translate Singbox-style servers into Mihomo DNS if needed
+      const alidns = customDns.servers.find((s: any) => s.tag === 'alidns' || s.server === '223.5.5.5')?.server || '223.5.5.5';
+      const remoteDns = customDns.servers.find((s: any) => s.tag === 'remote' || s.type === 'https')?.server || '1.1.1.1';
+      doc.dns = {
+        enable: true,
+        'prefer-h3': false,
+        'use-hosts': true,
+        'use-system-hosts': true,
+        'respect-rules': true,
+        'enhanced-mode': 'fake-ip',
+        'fake-ip-range': '198.18.0.0/15',
+        'default-nameserver': [alidns, '119.29.29.29'],
+        nameserver: [`https://${alidns}/dns-query`, `https://${remoteDns}/dns-query`],
+        fallback: [`https://${remoteDns}/dns-query`, 'tls://1.1.1.1:853'],
+      };
+    }
+  }
+
+  const networkSources = sources.filter(s => s.enabled && s.type !== 'custom' && s.url && s.url.startsWith('http'));
+  const customNodes = nodes.filter(n => n.sourceId === 'custom' || !n.sourceId);
+  const customNodeNames = customNodes.map(n => n.name);
+  const allNodeNames = nodes.map(n => n.name);
+
+  // 1. Inject Proxy Providers for network subscriptions
+  if (networkSources.length > 0) {
+    if (!doc['proxy-providers'] || typeof doc['proxy-providers'] !== 'object') {
+      doc['proxy-providers'] = {};
+    }
+    networkSources.forEach(s => {
+      const providerKey = s.name.trim();
+      doc['proxy-providers'][providerKey] = {
+        type: 'http',
+        url: s.url,
+        interval: 86400,
+        path: `./proxy_providers/${providerKey.replace(/[^a-zA-Z0-9_-]/g, '_')}.yaml`,
+        'health-check': {
+          enable: true,
+          url: 'https://www.gstatic.com/generate_204',
+          interval: 300,
+        },
+      };
+    });
+  }
+
+  const allProviderNames = networkSources.map(s => s.name.trim());
+
+  // 2. Build Proxy Groups
+  const generatedGroups: any[] = [];
+  proxyGroups.forEach(grp => {
+    if (grp.type === 'direct') {
+      generatedGroups.push({
+        name: grp.name,
+        type: 'select',
+        proxies: ['DIRECT'],
+      });
+      return;
+    }
+
+    const groupType = grp.type === 'urltest' ? 'url-test' : (grp.type === 'load-balance' ? 'load-balance' : grp.type);
+    const grpObj: any = {
+      name: grp.name,
+      type: groupType,
+    };
+
+    if (groupType === 'url-test' || groupType === 'fallback') {
+      grpObj.url = grp.url || 'https://www.gstatic.com/generate_204';
+      grpObj.interval = grp.interval || 300;
+      grpObj.tolerance = grp.tolerance || 50;
+    }
+
+    // If using filter regex (e.g. for country groups)
+    if (grp.filter) {
+      grpObj.filter = grp.filter;
+      if (allProviderNames.length > 0) {
+        grpObj.use = grp.use && grp.use.length > 0 ? grp.use : allProviderNames;
+      }
+      if (customNodeNames.length > 0) {
+        // Also include any custom nodes that might match or direct proxies
+        grpObj.proxies = customNodeNames;
+      } else if (!grpObj.use || grpObj.use.length === 0) {
+        grpObj.proxies = ['DIRECT'];
+      }
+      generatedGroups.push(grpObj);
+      return;
+    }
+
+    // Selector / General groups
+    const explicitProxies = grp.proxies || [];
+    const combinedProxies = new Set<string>(explicitProxies);
+
+    // If user explicitly specified `use` or this is a top-level aggregator group
+    if (grp.use && grp.use.length > 0) {
+      const mappedUse = grp.use.map(u => {
+        const direct = allProviderNames.find(p => p.toLowerCase() === u.toLowerCase());
+        if (direct) return direct;
+        const cleanU = u.replace(/^[⚡️\s]+/, '').trim().toLowerCase();
+        const canonical = allProviderNames.find(p => {
+          const cleanP = p.replace(/^[⚡️\s]+/, '').trim().toLowerCase();
+          return cleanP === cleanU || p.toLowerCase() === cleanU;
+        });
+        return canonical || u;
+      });
+      grpObj.use = mappedUse;
+    } else if (allProviderNames.length > 0 && (grp.name === '🚀 节点选择' || grp.name === '👉 手动选择' || grp.name === '♻️ 自动选择')) {
+      grpObj.use = allProviderNames;
+    }
+
+    // Add custom nodes or fallback
+    if (grp.name === '👉 手动选择' || (combinedProxies.size === 0 && !grpObj.use)) {
+      customNodeNames.forEach(name => combinedProxies.add(name));
+    }
+    if (combinedProxies.size === 0 && (!grpObj.use || grpObj.use.length === 0)) {
+      combinedProxies.add('DIRECT');
+    }
+
+    if (combinedProxies.size > 0) {
+      grpObj.proxies = Array.from(combinedProxies);
+    }
+
+    generatedGroups.push(grpObj);
+  });
+
+  doc['proxy-groups'] = generatedGroups.length > 0 ? generatedGroups : doc['proxy-groups'];
+
+  // 2. Build Remote Rule Providers
+  const activeRules = rulesList.filter(r => r.enabled);
+  const remoteRules = activeRules.filter(r => r.kind === 'remote');
+  const localRules = activeRules.filter(r => r.kind === 'local');
+
+  if (remoteRules.length > 0) {
+    if (!doc['rule-providers'] || typeof doc['rule-providers'] !== 'object') {
+      doc['rule-providers'] = {};
+    }
+    remoteRules.forEach((r, idx) => {
+      const provider = adaptRulesetForMihomo(r, idx);
+      doc['rule-providers'][provider.tag] = {
+        type: 'http',
+        behavior: provider.behavior,
+        format: provider.format,
+        path: provider.path,
+        url: provider.url,
+        interval: 86400,
+      };
+    });
+  }
+
+  // 3. Build Rules
+  const generatedRules: string[] = [];
+  localRules.forEach(r => {
+    if (r.type === 'FINAL') {
+      // final rule at the end
+    } else if (r.payload.includes(',')) {
+      r.payload.split(',').forEach(p => {
+        const item = p.trim();
+        if (item) generatedRules.push(`${r.type},${item},${r.outbound}`);
+      });
+    } else {
+      generatedRules.push(`${r.type},${r.payload},${r.outbound}`);
+    }
+  });
+
+  remoteRules.forEach((r, idx) => {
+    const tag = formatRuleTag(r, idx);
+    generatedRules.push(`RULE-SET,${tag},${r.outbound}`);
+  });
+
+  // Default fallback
+  generatedRules.push('MATCH,🐟 漏网之鱼');
+  doc.rules = generatedRules;
+
+  return doc;
+}
+
+export function injectUnifiedToSingbox(
+  doc: any,
+  proxyOutbounds: any[],
+  proxyGroups: ProxyGroupItem[],
+  rulesList: UnifiedRuleItem[],
+  dnsConfig?: any
+): any {
+  if (!doc.route) doc.route = {};
+  if (!doc.outbounds) doc.outbounds = [];
+
+  const customDns = parseDnsConfig(dnsConfig);
+  if (customDns && typeof customDns === 'object') {
+    doc.dns = doc.dns || {};
+    if (Array.isArray(customDns.servers)) {
+      doc.dns.servers = customDns.servers;
+    }
+    if (customDns.strategy) doc.dns.strategy = customDns.strategy;
+    if (customDns.final) doc.dns.final = customDns.final;
+    if (customDns.independent_cache !== undefined) doc.dns.independent_cache = customDns.independent_cache;
+    if (customDns.reverse_mapping !== undefined) doc.dns.reverse_mapping = customDns.reverse_mapping;
+    if (customDns.fakeip !== undefined) doc.dns.fakeip = customDns.fakeip;
+  }
+
+  // 1. Build Custom Proxy Groups (Selectors / URLTest)
+  const allNodeTags = proxyOutbounds.map(p => p.tag);
+
+  const effectiveGroups: ProxyGroupItem[] = [...proxyGroups];
+  const existingGroupNames = new Set(effectiveGroups.map(g => g.name.toLowerCase()));
+  const existingCleanNames = new Set(effectiveGroups.map(g => g.name.toLowerCase().replace(/^[⚡️🚀👉♻️🌐📹✈️🤖🇨🇳🇭🇰🇯🇵🇺🇸\s]+/, '').trim()));
+
+  // Discover unique subscription sources from proxyOutbounds
+  const discoveredSources = new Map<string, { groupTag: string; sourceName: string; isCustom: boolean }>();
+  proxyOutbounds.forEach(p => {
+    const sName = (p._sourceName || '').trim();
+    const sId = (p._sourceId || '').trim();
+    const isCustom = sId === 'custom';
+    const key = isCustom ? 'custom' : sName.toLowerCase();
+
+    if (!discoveredSources.has(key)) {
+      const sourceName = isCustom ? '独立节点组' : sName;
+      const groupTag = sourceName.startsWith('⚡️') ? sourceName : `⚡️ ${sourceName}`;
+      discoveredSources.set(key, {
+        groupTag,
+        sourceName,
+        isCustom,
+      });
+    }
+  });
+
+  // Automatically add dedicated URLTest group for any subscription source that does not yet have a group
+  discoveredSources.forEach(info => {
+    const cleanName = info.sourceName.toLowerCase();
+    const hasExisting = effectiveGroups.some(g => {
+      const gClean = g.name.toLowerCase().replace(/^[⚡️\s]+/, '').trim();
+      return gClean === cleanName || g.name.toLowerCase() === info.groupTag.toLowerCase();
+    });
+
+    if (!hasExisting) {
+      const srcGroup: ProxyGroupItem = {
+        id: `grp-src-${info.sourceName}`,
+        name: info.groupTag,
+        type: 'urltest',
+        use: [info.sourceName],
+        tolerance: 50,
+        interval: 300,
+        url: 'https://www.gstatic.com/generate_204',
+      };
+      effectiveGroups.push(srcGroup);
+      existingGroupNames.add(info.groupTag.toLowerCase());
+      existingCleanNames.add(cleanName);
+    }
+  });
+
+  // Ensure '🚀 节点选择' references all active source groups
+  const mainSelector = effectiveGroups.find(g => g.name === '🚀 节点选择');
+  if (mainSelector && mainSelector.proxies) {
+    discoveredSources.forEach(info => {
+      if (!mainSelector.proxies!.includes(info.groupTag)) {
+        mainSelector.proxies!.unshift(info.groupTag);
+      }
+    });
+  }
+
+  const groupOutbounds: any[] = [];
+  effectiveGroups.forEach(grp => {
+    if (grp.type === 'direct') {
+      groupOutbounds.push({
+        tag: grp.name,
+        type: 'direct',
+      });
+      return;
+    }
+
+    let outboundsList = grp.proxies ? [...grp.proxies] : [];
+
+    // Support use: [ "MESL" ] or [ "独立节点组" ] by matching exact source names
+    if (grp.use && grp.use.length > 0) {
+      const useNormalized = new Set(
+        grp.use.map(u => u.trim().toLowerCase().replace(/^[⚡️\s]+/, ''))
+      );
+      const matchedNodeTags = proxyOutbounds
+        .filter(p => {
+          const sName = (p._sourceName || '').trim().toLowerCase().replace(/^[⚡️\s]+/, '');
+          const sId = (p._sourceId || '').trim().toLowerCase();
+          return useNormalized.has(sName) || useNormalized.has(sId) || (sId === 'custom' && (useNormalized.has('独立节点组') || useNormalized.has('手工自建') || useNormalized.has('custom')));
+        })
+        .map(p => p.tag);
+      outboundsList = Array.from(new Set([...outboundsList, ...matchedNodeTags]));
+    } else if (grp.filter) {
+      try {
+        const cleanFilter = grp.filter.trim().replace(/^\(\?i\)/i, '').replace(/\(\?i\)/gi, '');
+        const reg = new RegExp(cleanFilter, 'i');
+        const matched = allNodeTags.filter(tag => reg.test(tag));
+        outboundsList = matched.length > 0 ? matched : ['🎯 本地直连'];
+      } catch (e) {
+        outboundsList = ['🎯 本地直连'];
+      }
+    } else {
+      // Auto-match if group name matches a subscription source name
+      const cleanGrpName = grp.name.trim().toLowerCase().replace(/^[⚡️\s]+/, '');
+      const isCustomGrp = cleanGrpName === '独立节点组' || cleanGrpName === '手工自建' || cleanGrpName === 'custom';
+      const matchedNodeTags = proxyOutbounds
+        .filter(p => {
+          const sName = (p._sourceName || '').trim().toLowerCase().replace(/^[⚡️\s]+/, '');
+          const sId = (p._sourceId || '').trim().toLowerCase();
+          if (isCustomGrp) return sId === 'custom' || sName === '独立节点组' || sName === '手工自建';
+          return sName === cleanGrpName;
+        })
+        .map(p => p.tag);
+
+      if (matchedNodeTags.length > 0) {
+        outboundsList = Array.from(new Set([...outboundsList, ...matchedNodeTags]));
+      } else if (grp.name === '👉 手动选择' || grp.name === '♻️ 自动选择') {
+        outboundsList = allNodeTags.length > 0 ? allNodeTags : ['🎯 本地直连'];
+      }
+    }
+
+    // ALWAYS ensure outboundsList is not empty to prevent "missing tags" error in Sing-box
+    if (outboundsList.length === 0) {
+      outboundsList = ['🎯 本地直连'];
+    }
+
+    if (grp.type === 'urltest' || grp.type === 'fallback') {
+      const urltestOutbound: any = {
+        tag: grp.name,
+        type: 'urltest',
+        outbounds: outboundsList,
+      };
+      if (grp.url) urltestOutbound.url = grp.url;
+      if (grp.interval) urltestOutbound.interval = typeof grp.interval === 'number' ? `${grp.interval}s` : grp.interval;
+      if (typeof grp.tolerance === 'number') urltestOutbound.tolerance = grp.tolerance;
+      groupOutbounds.push(urltestOutbound);
+    } else {
+      groupOutbounds.push({
+        tag: grp.name,
+        type: 'selector',
+        outbounds: outboundsList,
+      });
+    }
+  });
+
+  // Clean temporary _sourceName and _sourceId properties from proxy outbounds
+  proxyOutbounds.forEach(p => {
+    delete p._sourceName;
+    delete p._sourceId;
+  });
+
+  // Ensure 🎯 本地直连 always exists
+  if (!groupOutbounds.some(g => g.tag === '🎯 本地直连' || g.type === 'direct')) {
+    groupOutbounds.push({
+      tag: '🎯 本地直连',
+      type: 'direct',
+    });
+  }
+
+  doc.outbounds = [...groupOutbounds, ...proxyOutbounds];
+
+  // 2. Build Remote Rule Sets
+  const activeRules = rulesList.filter(r => r.enabled);
+  const remoteRules = activeRules.filter(r => r.kind === 'remote');
+  const localRules = activeRules.filter(r => r.kind === 'local');
+
+  const ruleSets: any[] = [];
+  remoteRules.forEach((r, idx) => {
+    const adapted = adaptRulesetForSingbox(r, idx);
+    ruleSets.push({
+      type: 'remote',
+      tag: adapted.tag,
+      format: adapted.format,
+      url: adapted.url,
+      // In sing-box 1.14.0+, download_detour is deprecated and removed in 1.16.0 in favor of http_client
+      http_client: 'default',
+    });
+  });
+  doc.route.rule_set = ruleSets;
+
+  if (!doc.http_clients) {
+    doc.http_clients = [
+      {
+        tag: 'default',
+        detour: '🚀 节点选择',
+      },
+    ];
+  } else {
+    let defaultClient = doc.http_clients.find((c: any) => c.tag === 'default');
+    if (!defaultClient) {
+      defaultClient = { tag: 'default', detour: '🚀 节点选择' };
+      doc.http_clients.push(defaultClient);
+    } else if (!defaultClient.detour) {
+      defaultClient.detour = '🚀 节点选择';
+    }
+  }
+
+  if (!doc.route.default_http_client) {
+    doc.route.default_http_client = 'default';
+  }
+
+  if (!doc.route.default_domain_resolver) {
+    const localDnsTag = doc.dns?.servers?.find((s: any) => s.tag === 'alidns' || s.tag === 'local' || s.type === 'udp')?.tag || 'local';
+    doc.route.default_domain_resolver = {
+      server: localDnsTag,
+    };
+  }
+
+  // Sanitize and dynamically build doc.dns.rules to ensure full IPv6 support for direct domains & custom user DNS rules
+  if (doc.dns) {
+    if (!doc.dns.strategy) doc.dns.strategy = 'prefer_ipv4';
+
+    const validRuleSetTags = new Set(ruleSets.map(rs => rs.tag));
+
+    // 1. Gather all direct domain suffixes from local rules (e.g. DDNS, private IPv6, university, NAS, PT trackers)
+    const directDomainSuffixes: string[] = [];
+    localRules.forEach(r => {
+      if (r.outbound === '🎯 本地直连' || r.outbound === 'direct') {
+        if (r.type === 'DOMAIN-SUFFIX' || r.type === 'DOMAIN') {
+          const items = r.payload.split(/[,;\n]+/).map(s => s.trim()).filter(Boolean);
+          directDomainSuffixes.push(...items);
+        }
+      }
+    });
+
+    // 2. Gather domestic geosite rule_sets (must be domain-based geosite, NOT ip-based geoip)
+    const domesticRuleSets = remoteRules
+      .map((r, idx) => adaptRulesetForSingbox(r, idx))
+      .filter(ad => {
+        const isDomestic = ad.tag.includes('cn') || ad.tag.includes('direct') || ad.url.includes('cn');
+        return isDomestic && ad.behavior === 'domain';
+      })
+      .map(ad => ad.tag)
+      .filter(tag => validRuleSetTags.has(tag));
+
+    // 3. Gather overseas proxy geosite rule_sets (must be domain-based geosite, NOT ip-based geoip)
+    const proxyRuleSets = remoteRules
+      .map((r, idx) => adaptRulesetForSingbox(r, idx))
+      .filter(ad => {
+        const isDomestic = ad.tag.includes('cn') || ad.tag.includes('direct') || ad.url.includes('cn');
+        return !isDomestic && ad.behavior === 'domain';
+      })
+      .map(ad => ad.tag)
+      .filter(tag => validRuleSetTags.has(tag));
+
+    const dnsRules: any[] = [];
+
+    // Step A0: User-custom direct DNS rules from dnsConfig (e.g. ads rejection, custom domain->system / alidns)
+    if (customDns && Array.isArray(customDns.rules)) {
+      customDns.rules.forEach((cr: any) => {
+        if (cr.query_type === 'AAAA' || cr.clash_mode) return;
+        if (cr.rule_set) {
+          const ruleSetList = Array.isArray(cr.rule_set) ? cr.rule_set : [cr.rule_set];
+          // Filter out rule sets that are not declared in route.rule_set or are IP-based (geoip) to prevent Sing-box crash
+          const validList = ruleSetList.filter((rsTag: string) => validRuleSetTags.has(rsTag) && !rsTag.startsWith('geoip'));
+          if (validList.length === 0) return;
+          dnsRules.push({
+            ...cr,
+            rule_set: Array.isArray(cr.rule_set) ? validList : validList[0],
+          });
+          return;
+        }
+        dnsRules.push(cr);
+      });
+    }
+
+    // Step A: Direct local domains -> alidns (resolves both IPv4 and full IPv6 without being rejected)
+    const uniqueDirectSuffixes = Array.from(new Set([
+      'local',
+      'arpa',
+      'in-addr.arpa',
+      'ip6.arpa',
+      'gstatic.com',
+      'gvt1.com',
+      'cp.cloudflare.com',
+      ...directDomainSuffixes,
+    ]));
+    dnsRules.push({
+      domain_suffix: uniqueDirectSuffixes,
+      server: 'alidns',
+    });
+
+    // Step B: Domestic GeoSite rule-sets -> alidns (allows full dual-stack IPv4/IPv6 for domestic services)
+    if (domesticRuleSets.length > 0) {
+      dnsRules.push({
+        rule_set: domesticRuleSets,
+        server: 'alidns',
+      });
+    }
+
+    // Step C: Reject AAAA for overseas / proxy traffic (prevents proxy IPv6 leaks & broken overseas IPv6 routes)
+    dnsRules.push({
+      query_type: 'AAAA',
+      action: 'reject',
+    });
+
+    // Step D: Proxy GeoSite rule-sets -> fakeip
+    if (proxyRuleSets.length > 0) {
+      dnsRules.push({
+        rule_set: proxyRuleSets,
+        server: 'fakeip',
+      });
+    }
+
+    // Step E: Overseas keywords -> fakeip
+    dnsRules.push({
+      domain_keyword: ['antigravity', 'perplexity', 'youtube', 'google'],
+      server: 'fakeip',
+    });
+
+    // Step F: Clash API controls
+    dnsRules.push({ clash_mode: 'Direct', server: 'alidns' });
+    dnsRules.push({ clash_mode: 'Global', server: 'remote' });
+
+    doc.dns.rules = dnsRules;
+  }
+
+  // 3. Build Route Rules
+  const routeRules: any[] = [
+    { action: 'sniff' },
+    { protocol: 'quic', action: 'reject' },
+    {
+      type: 'logical',
+      mode: 'or',
+      rules: [
+        { protocol: 'dns' },
+        { port: 53 },
+      ],
+      action: 'hijack-dns',
+    },
+    {
+      type: 'logical',
+      mode: 'or',
+      rules: [
+        { port: 853 },
+        { protocol: 'stun' },
+      ],
+      action: 'reject',
+    },
+    { ip_is_private: true, outbound: '🎯 本地直连' },
+  ];
+
+  localRules.forEach(r => {
+    const payloads = r.payload.split(/[,;\n]+/).map(s => s.trim()).filter(Boolean);
+    if (r.type === 'DOMAIN-SUFFIX') {
+      routeRules.push({ domain_suffix: payloads, outbound: r.outbound });
+    } else if (r.type === 'DOMAIN-KEYWORD') {
+      routeRules.push({ domain_keyword: payloads, outbound: r.outbound });
+    } else if (r.type === 'DOMAIN') {
+      routeRules.push({ domain: payloads, outbound: r.outbound });
+    } else if (r.type === 'IP-CIDR') {
+      routeRules.push({ ip_cidr: payloads, outbound: r.outbound });
+    } else if (r.type === 'GEOIP') {
+      routeRules.push({ geoip: payloads, outbound: r.outbound });
+    }
+  });
+
+  remoteRules.forEach((r, idx) => {
+    const tag = formatRuleTag(r, idx);
+    routeRules.push({
+      rule_set: tag,
+      outbound: r.outbound,
+    });
+  });
+
+  doc.route.rules = routeRules;
+  doc.route.final = '🐟 漏网之鱼';
+
+  return doc;
+}
+
+export function injectUnifiedToLoon(
+  templateMcf: string,
+  nodes: ProxyNode[],
+  proxyGroups: ProxyGroupItem[],
+  rulesList: UnifiedRuleItem[],
+  sources: SubscriptionSource[] = [],
+  options?: { expandNodes?: boolean }
+): string {
+  const expandNodes = Boolean(options?.expandNodes);
+  const lines = templateMcf.split('\n');
+  const activeRules = rulesList.filter(r => r.enabled);
+  const remoteRules = activeRules.filter(r => r.kind === 'remote');
+  const localRules = activeRules.filter(r => r.kind === 'local');
+
+  const networkSources = sources.filter(s => s.enabled && s.type !== 'custom' && s.url && s.url.startsWith('http'));
+  const customNodes = nodes.filter(n => n.sourceId === 'custom' || !n.sourceId);
+  const customNodeNames = customNodes.map(n => n.name.replace(/[=,]/g, '_'));
+  const allNodeNames = nodes.map(n => n.name.replace(/[=,]/g, '_'));
+
+  // Helper to generate a clean filter tag that never collides with proxy group name
+  function getLoonFilterTag(grp: ProxyGroupItem): string {
+    const cleanTag = grp.name
+      .replace(/^[\p{Extended_Pictographic}\s⚡️🚀👉♻️🌐📹✈️🤖🇨🇳🇭🇰🇯🇵🇺🇸🏮🇸🇬]+/u, '')
+      .replace(/[=,]/g, '_')
+      .trim();
+
+    if (!cleanTag || cleanTag === grp.name.trim()) {
+      return `${cleanTag || 'Filter'}_Filter`;
+    }
+    return cleanTag;
+  }
+
+  // 1. Build [Remote Proxy] (Loon native remote subscriptions)
+  const remoteProxyLines: string[] = [];
+  if (!expandNodes) {
+    networkSources.forEach(s => {
+      const tag = s.name.replace(/[=,]/g, '_').trim();
+      remoteProxyLines.push(`${tag} = ${s.url}, udp=true, fast-open=default, skip-cert-verify=true, enabled=true`);
+    });
+  }
+
+  // 2. Build [Remote Filter] (Regex / region filters for subscription nodes)
+  const filterMap = new Map<string, string>();
+  if (!expandNodes) {
+    proxyGroups.forEach(grp => {
+      if (grp.filter) {
+        const filterTag = getLoonFilterTag(grp);
+        filterMap.set(filterTag, grp.filter);
+      }
+    });
+    filterMap.set('全部节点', '.*');
+  }
+
+  const remoteFilterLines: string[] = [];
+  filterMap.forEach((filterKey, tag) => {
+    remoteFilterLines.push(`${tag} = NameRegex, FilterKey = "${filterKey}"`);
+  });
+
+  // 3. Build [Proxy Group]
+  const sourceGroupTags: string[] = [];
+  networkSources.forEach(s => {
+    const tag = s.name.replace(/[=,]/g, '_').trim();
+    sourceGroupTags.push(tag.startsWith('⚡️') ? tag : `⚡️ ${tag}`);
+  });
+  if (customNodes.length > 0) {
+    sourceGroupTags.push('⚡️ 独立节点组');
+  }
+
+  const existingGroupNames = new Set(proxyGroups.map(g => g.name.toLowerCase()));
+  const groupLines: string[] = [];
+
+  proxyGroups.forEach(grp => {
+    if (grp.type === 'direct') {
+      groupLines.push(`${grp.name} = select, DIRECT`);
+      return;
+    }
+
+    const groupType = grp.type === 'urltest' ? 'url-test' : (grp.type === 'load-balance' ? 'load-balance' : (grp.type || 'select'));
+
+    // If group has filter (e.g. 🇭🇰 香港节点)
+    if (grp.filter) {
+      if (expandNodes) {
+        const cleanFilter = grp.filter.trim().replace(/^\(\?i\)/i, '').replace(/\(\?i\)/gi, '');
+        let matched: string[] = [];
+        try {
+          const reg = new RegExp(cleanFilter, 'i');
+          matched = nodes.filter(n => reg.test(n.name)).map(n => n.name.replace(/[=,]/g, '_'));
+        } catch {
+          matched = [];
+        }
+        const members = matched.length > 0 ? matched : ['DIRECT'];
+        groupLines.push(`${grp.name} = ${groupType}, ${members.join(', ')}, url=https://www.gstatic.com/generate_204, interval=300, tolerance=${grp.tolerance || 50}`);
+      } else {
+        const filterTag = getLoonFilterTag(grp);
+        groupLines.push(`${grp.name} = ${groupType}, ${filterTag}, url=https://www.gstatic.com/generate_204, interval=300, tolerance=${grp.tolerance || 50}`);
+      }
+      return;
+    }
+
+    if (grp.name === '♻️ 自动选择') {
+      const members = expandNodes
+        ? (allNodeNames.length > 0 ? allNodeNames : ['DIRECT'])
+        : ['全部节点', ...customNodeNames];
+      groupLines.push(`${grp.name} = url-test, ${members.join(', ')}, url=https://www.gstatic.com/generate_204, interval=300, tolerance=${grp.tolerance || 50}`);
+      return;
+    }
+
+    if (grp.name === '👉 手动选择') {
+      const members = expandNodes
+        ? (allNodeNames.length > 0 ? allNodeNames : ['DIRECT'])
+        : ['全部节点', ...customNodeNames];
+      groupLines.push(`${grp.name} = select, ${members.join(', ')}`);
+      return;
+    }
+
+    // Match dedicated source group (e.g. ⚡️ MESL)
+    const cleanName = grp.name.replace(/^[⚡️\s]+/, '').trim().toLowerCase();
+    const matchedSource = networkSources.find(s => s.name.replace(/^[⚡️\s]+/, '').trim().toLowerCase() === cleanName);
+    if (matchedSource) {
+      if (expandNodes) {
+        const srcNodes = nodes
+          .filter(n => n.sourceName === matchedSource.name || n.sourceId === matchedSource.id)
+          .map(n => n.name.replace(/[=,]/g, '_'));
+        const members = srcNodes.length > 0 ? srcNodes : ['DIRECT'];
+        if (groupType === 'url-test' || groupType === 'urltest') {
+          groupLines.push(`${grp.name} = url-test, ${members.join(', ')}, url=https://www.gstatic.com/generate_204, interval=300, tolerance=${grp.tolerance || 50}`);
+        } else {
+          groupLines.push(`${grp.name} = select, ${members.join(', ')}`);
+        }
+      } else {
+        const sTag = matchedSource.name.replace(/[=,]/g, '_').trim();
+        if (groupType === 'url-test' || groupType === 'urltest') {
+          groupLines.push(`${grp.name} = url-test, ${sTag}, url=https://www.gstatic.com/generate_204, interval=300, tolerance=${grp.tolerance || 50}`);
+        } else {
+          groupLines.push(`${grp.name} = select, ${sTag}`);
+        }
+      }
+      return;
+    }
+
+    if (cleanName === '独立节点组' || cleanName === 'custom' || cleanName === '手工自建') {
+      const members = customNodeNames.length > 0 ? customNodeNames : ['DIRECT'];
+      groupLines.push(`${grp.name} = select, ${members.join(', ')}`);
+      return;
+    }
+
+    // Standard selector group with proxies list (e.g. 🚀 节点选择, 🤖 AI 服务, 📹 YouTube, 🌐 Google, etc.)
+    let proxies = grp.proxies ? [...grp.proxies] : [];
+
+    // If main selector (🚀 节点选择), ensure source groups are prepended
+    if (grp.name === '🚀 节点选择') {
+      sourceGroupTags.forEach(st => {
+        if (!proxies.includes(st)) {
+          proxies.unshift(st);
+        }
+      });
+    }
+
+    // Support grp.use: ['自建'] or ['⚡️ 自建'] or ['MESL']
+    if (grp.use && grp.use.length > 0) {
+      grp.use.forEach(u => {
+        const cleanU = u.replace(/^[⚡️\s]+/, '').trim().toLowerCase();
+        if (expandNodes) {
+          const matchedNodes = nodes.filter(n => {
+            const sName = (n.sourceName || '').trim().toLowerCase().replace(/^[⚡️\s]+/, '');
+            const sId = (n.sourceId || '').trim().toLowerCase();
+            return sName === cleanU || sId === cleanU || (sId === 'custom' && (cleanU === '独立节点组' || cleanU === '手工自建'));
+          }).map(n => n.name.replace(/[=,]/g, '_'));
+          matchedNodes.forEach(m => {
+            if (!proxies.includes(m)) proxies.unshift(m);
+          });
+        } else {
+          const matched = sourceGroupTags.find(st => st.replace(/^[⚡️\s]+/, '').trim().toLowerCase() === cleanU);
+          const tagToAdd = matched || (u.startsWith('⚡️') ? u : `⚡️ ${u}`);
+          if (!proxies.includes(tagToAdd)) {
+            proxies.unshift(tagToAdd);
+          }
+        }
+      });
+    }
+
+    if (proxies.length === 0) {
+      proxies = ['全部节点', 'DIRECT'];
+    }
+
+    groupLines.push(`${grp.name} = ${groupType}, ${proxies.join(', ')}`);
+  });
+
+  // Ensure dedicated source groups exist if not yet added
+  networkSources.forEach(s => {
+    const sTag = s.name.replace(/[=,]/g, '_').trim();
+    const grpTag = sTag.startsWith('⚡️') ? sTag : `⚡️ ${sTag}`;
+    if (!existingGroupNames.has(grpTag.toLowerCase()) && !existingGroupNames.has(sTag.toLowerCase())) {
+      if (expandNodes) {
+        const srcNodes = nodes
+          .filter(n => n.sourceName === s.name || n.sourceId === s.id)
+          .map(n => n.name.replace(/[=,]/g, '_'));
+        const members = srcNodes.length > 0 ? srcNodes : ['DIRECT'];
+        groupLines.push(`${grpTag} = url-test, ${members.join(', ')}, url=https://www.gstatic.com/generate_204, interval=300, tolerance=50`);
+      } else {
+        groupLines.push(`${grpTag} = url-test, ${sTag}, url=https://www.gstatic.com/generate_204, interval=300, tolerance=50`);
+      }
+    }
+  });
+
+  if (customNodes.length > 0 && !existingGroupNames.has('⚡️ 独立节点组') && !existingGroupNames.has('独立节点组')) {
+    groupLines.push(`⚡️ 独立节点组 = select, ${customNodeNames.join(', ')}`);
+  }
+
+  // 4. Build [Rule]
+  const localRuleLines = localRules.flatMap(r => {
+    const payloads = r.payload.split(/[,;\n]+/).map(p => p.trim()).filter(Boolean);
+    return payloads.map(p => `${r.type},${p},${r.outbound}`);
+  });
+
+  // 5. Build [Remote Rule]
+  const remoteRuleLines = remoteRules.map((r, idx) => {
+    const adapted = adaptRulesetForLoon(r, idx);
+    const tag = r.name.replace(/[=,]/g, '_');
+    return `${adapted.url}, policy=${r.outbound}, tag=${tag}, enabled=true`;
+  });
+
+  const result: string[] = [];
+  let hasHandledRemoteProxy = false;
+  let hasHandledRemoteFilter = false;
+  let hasHandledGroup = false;
+
+  let inSkippedSection = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    // Ignore legacy or incorrect [Proxy Provider] header
+    if (trimmed === '[Proxy Provider]') {
+      continue;
+    }
+
+    // If expandNodes is true, do not retain existing lines in [Remote Proxy] or [Remote Filter]
+    if (expandNodes && (trimmed === '[Remote Proxy]' || trimmed === '[Remote Filter]')) {
+      inSkippedSection = true;
+      continue;
+    }
+    if (inSkippedSection && trimmed.startsWith('[')) {
+      inSkippedSection = false;
+    }
+    if (inSkippedSection) {
+      continue;
+    }
+
+    if (trimmed === '[Remote Proxy]') {
+      hasHandledRemoteProxy = true;
+      result.push(line);
+      result.push(...remoteProxyLines);
+      continue;
+    }
+
+    if (trimmed === '[Remote Filter]') {
+      hasHandledRemoteFilter = true;
+      result.push(line);
+      result.push(...remoteFilterLines);
+      continue;
+    }
+
+    if (trimmed === '[Proxy Group]') {
+      hasHandledGroup = true;
+      if (!expandNodes) {
+        // If template missed [Remote Proxy], insert it before [Proxy Group]
+        if (!hasHandledRemoteProxy && remoteProxyLines.length > 0) {
+          result.push('[Remote Proxy]');
+          result.push(...remoteProxyLines);
+          result.push('');
+          hasHandledRemoteProxy = true;
+        }
+        // If template missed [Remote Filter], insert it before [Proxy Group]
+        if (!hasHandledRemoteFilter && remoteFilterLines.length > 0) {
+          result.push('[Remote Filter]');
+          result.push(...remoteFilterLines);
+          result.push('');
+          hasHandledRemoteFilter = true;
+        }
+      }
+      result.push(line);
+      result.push(...groupLines);
+      continue;
+    }
+
+    if (trimmed === '[Rule]') {
+      result.push(line);
+      result.push(...localRuleLines);
+      continue;
+    }
+
+    if (trimmed === '[Remote Rule]') {
+      result.push(line);
+      result.push(...remoteRuleLines);
+      continue;
+    }
+
+    result.push(line);
+  }
+
+  if (!expandNodes) {
+    if (!hasHandledRemoteProxy && remoteProxyLines.length > 0) {
+      result.push('\n[Remote Proxy]');
+      result.push(...remoteProxyLines);
+    }
+    if (!hasHandledRemoteFilter && remoteFilterLines.length > 0) {
+      result.push('\n[Remote Filter]');
+      result.push(...remoteFilterLines);
+    }
+  }
+  if (!hasHandledGroup && groupLines.length > 0) {
+    result.push('\n[Proxy Group]');
+    result.push(...groupLines);
+  }
+
+  return result.join('\n');
+}
+
