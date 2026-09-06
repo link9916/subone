@@ -354,7 +354,7 @@ export const INITIAL_RULES_LIST: UnifiedRuleItem[] = [
   },
   {
     id: 'r-ai-local',
-    name: 'AI 核心服务域名 (OpenAI / Claude / Gemini / Perplexity / Grok / Copilot)',
+    name: 'AI 域名 (OpenAI / Claude / Gemini / Perplexity / Grok / Copilot)',
     kind: 'local',
     type: 'DOMAIN-SUFFIX',
     payload: 'chatgpt.com, openai.com, oaistatic.com, oaiusercontent.com, claude.ai, anthropic.com, claudeusercontent.com, perplexity.ai, grok.com, x.ai, cursor.sh, cursor.com, poe.com, mistral.ai, cohere.com, copilot.microsoft.com, sydney.bing.com, generativelanguage.googleapis.com, aistudio.google.com, bard.google.com, makersuite.google.com',
@@ -363,7 +363,7 @@ export const INITIAL_RULES_LIST: UnifiedRuleItem[] = [
   },
   {
     id: 'r-ai-keyword',
-    name: 'AI 核心关键词流量',
+    name: 'AI 域名关键字',
     kind: 'local',
     type: 'DOMAIN-KEYWORD',
     payload: 'openai, chatgpt, claude, anthropic, perplexity',
@@ -372,7 +372,7 @@ export const INITIAL_RULES_LIST: UnifiedRuleItem[] = [
   },
   {
     id: 'r-ai-remote',
-    name: 'AI 服务扩展规则集 (Category-AI-!CN)',
+    name: 'AI 规则集 (Category-AI-!CN)',
     kind: 'remote',
     type: 'RULE-SET',
     payload: 'https://gh-proxy.com/https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/category-ai-!cn.srs',

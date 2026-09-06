@@ -20,7 +20,7 @@
   - 本地规则：CIDR、DOMAIN、DOMAIN-SUFFIX、DOMAIN-KEYWORD 等；
   - 远程规则集：GeoSite / GeoIP / SRS / MRS 规则集统一管理与去向分流；
 - **模板与智能下发**：
-  - 默认提供 Sing-box、Mihomo 与 Loon 的标准模版，DNS 及高级核心策略直接在模版中灵活掌控；
+  - 默认提供 Sing-box、Mihomo 与 Loon 的标准模版，其它需要的策略可以通过在模版中编辑控制，实时生效；
   - 每个订阅可为不同客户端绑定专属模版；
   - 根据客户端 User-Agent 智能下发对应格式，无 UA 时默认下发 Sing-box 格式，亦可通过 URL 显式指定。
 

@@ -938,7 +938,7 @@ const ProfileEditModal: React.FC<ProfileEditModalProps> = ({
             }`}
           >
             <Radio className="w-3.5 h-3.5" />
-            2. 节点挑选 ({filter.selectedNodeIds?.length || 0})
+            2. 选择节点 ({filter.selectedNodeIds?.length || 0})
           </button>
           <button
             onClick={() => setActiveTab('groups')}
@@ -949,7 +949,7 @@ const ProfileEditModal: React.FC<ProfileEditModalProps> = ({
             }`}
           >
             <SlidersHorizontal className="w-3.5 h-3.5" />
-            3. 策略组挑选 ({profile.selectedGroupIds?.length || 0})
+            3. 策略组 ({profile.selectedGroupIds?.length || 0})
           </button>
           <button
             onClick={() => setActiveTab('rules')}
@@ -960,7 +960,7 @@ const ProfileEditModal: React.FC<ProfileEditModalProps> = ({
             }`}
           >
             <Filter className="w-3.5 h-3.5" />
-            4. 分流规则挑选 ({profile.selectedRuleIds?.length || 0})
+            4. 分流规则 ({profile.selectedRuleIds?.length || 0})
           </button>
         </div>
 
@@ -1148,14 +1148,14 @@ const ProfileEditModal: React.FC<ProfileEditModalProps> = ({
                     onClick={handleSelectAllCandidates}
                     className="px-2.5 py-1 text-xs font-medium rounded-lg bg-[#FAF8F5] hover:bg-[#EFEAE2] border border-[#E3DDD2] text-[#1F1E1D] transition-colors cursor-pointer"
                   >
-                    勾选当前初筛
+                    勾选本页全部
                   </button>
                   <button
                     type="button"
                     onClick={handleDeselectAllCandidates}
                     className="px-2.5 py-1 text-xs font-medium rounded-lg bg-[#FAF8F5] hover:bg-[#EFEAE2] border border-[#E3DDD2] text-[#1F1E1D] transition-colors cursor-pointer"
                   >
-                    取消当前初筛
+                    取消本页全部
                   </button>
                   <button
                     type="button"

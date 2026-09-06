@@ -67,8 +67,28 @@ export function injectUnifiedToMihomo(
   const allProviderNames = networkSources.map(s => s.name.trim());
 
   // 2. Build Proxy Groups
+  const effectiveGroups: ProxyGroupItem[] = proxyGroups.map(g => ({
+    ...g,
+    proxies: g.proxies ? [...g.proxies] : undefined,
+    use: g.use ? [...g.use] : undefined,
+  }));
+
+  const validGroupNames = new Set(effectiveGroups.map(g => g.name));
+  const validNodeNames = new Set(allNodeNames);
+  const isBuiltinClashProxy = (t: string) => {
+    const upper = t.trim().toUpperCase();
+    return (
+      upper === 'DIRECT' ||
+      upper === 'REJECT' ||
+      upper === 'PASS' ||
+      upper === 'COMPATIBLE' ||
+      upper === 'GLOBAL' ||
+      t.trim() === '🎯 本地直连'
+    );
+  };
+
   const generatedGroups: any[] = [];
-  proxyGroups.forEach(grp => {
+  effectiveGroups.forEach(grp => {
     if (grp.type === 'direct') {
       generatedGroups.push({
         name: grp.name,
@@ -129,8 +149,11 @@ export function injectUnifiedToMihomo(
           return cleanP === cleanU || p.toLowerCase() === cleanU;
         });
         return canonical || u;
-      });
-      grpObj.use = mappedUse;
+      }).filter(u => allProviderNames.includes(u));
+
+      if (mappedUse.length > 0) {
+        grpObj.use = mappedUse;
+      }
     } else if (allProviderNames.length > 0 && (grp.name === '🚀 节点选择' || grp.name === '👉 手动选择' || grp.name === '♻️ 自动选择')) {
       grpObj.use = allProviderNames;
     }
@@ -139,12 +162,20 @@ export function injectUnifiedToMihomo(
     if (grp.name === '👉 手动选择' || (combinedProxies.size === 0 && !grpObj.use)) {
       customNodeNames.forEach(name => combinedProxies.add(name));
     }
-    if (combinedProxies.size === 0 && (!grpObj.use || grpObj.use.length === 0)) {
-      combinedProxies.add('DIRECT');
+
+    // Filter combinedProxies to only keep valid groups, nodes, or builtins
+    const filteredProxies = Array.from(combinedProxies).filter(p => {
+      if (!p || p.trim() === grp.name) return false;
+      const t = p.trim();
+      return validGroupNames.has(t) || validNodeNames.has(t) || isBuiltinClashProxy(t);
+    });
+
+    if (filteredProxies.length > 0) {
+      grpObj.proxies = filteredProxies;
     }
 
-    if (combinedProxies.size > 0) {
-      grpObj.proxies = Array.from(combinedProxies);
+    if ((!grpObj.proxies || grpObj.proxies.length === 0) && (!grpObj.use || grpObj.use.length === 0)) {
+      grpObj.proxies = ['DIRECT'];
     }
 
     generatedGroups.push(grpObj);
@@ -219,7 +250,11 @@ export function injectUnifiedToSingbox(
   // 1. Build Custom Proxy Groups (Selectors / URLTest)
   const allNodeTags = proxyOutbounds.map(p => p.tag);
 
-  const effectiveGroups: ProxyGroupItem[] = [...proxyGroups];
+  const effectiveGroups: ProxyGroupItem[] = proxyGroups.map(g => ({
+    ...g,
+    proxies: g.proxies ? [...g.proxies] : undefined,
+    use: g.use ? [...g.use] : undefined,
+  }));
   const existingGroupNames = new Set(effectiveGroups.map(g => g.name.toLowerCase()));
   const existingCleanNames = new Set(effectiveGroups.map(g => g.name.toLowerCase().replace(/^[⚡️🚀👉♻️🌐📹✈️🤖🇨🇳🇭🇰🇯🇵🇺🇸\s]+/, '').trim()));
 
@@ -266,15 +301,29 @@ export function injectUnifiedToSingbox(
     }
   });
 
-  // Ensure '🚀 节点选择' references all active source groups
+  // Ensure '🚀 节点选择' references all active source groups (only if that source group exists in effectiveGroups)
   const mainSelector = effectiveGroups.find(g => g.name === '🚀 节点选择');
   if (mainSelector && mainSelector.proxies) {
     discoveredSources.forEach(info => {
-      if (!mainSelector.proxies!.includes(info.groupTag)) {
+      if (effectiveGroups.some(g => g.name === info.groupTag) && !mainSelector.proxies!.includes(info.groupTag)) {
         mainSelector.proxies!.unshift(info.groupTag);
       }
     });
   }
+
+  const validGroupTags = new Set(effectiveGroups.map(g => g.name));
+  const validNodeTags = new Set(allNodeTags);
+  const isBuiltinSingboxOutbound = (t: string) => {
+    const upper = t.trim().toUpperCase();
+    return (
+      upper === 'DIRECT' ||
+      upper === 'REJECT' ||
+      upper === 'BLOCK' ||
+      upper === 'GLOBAL' ||
+      upper === 'DNS-OUT' ||
+      t.trim() === '🎯 本地直连'
+    );
+  };
 
   const groupOutbounds: any[] = [];
   effectiveGroups.forEach(grp => {
@@ -336,6 +385,16 @@ export function injectUnifiedToSingbox(
         outboundsList = allNodeTags.length > 0 ? allNodeTags : ['🎯 本地直连'];
       }
     }
+
+    // Filter out invalid/dangling tags (e.g. unselected source groups like ⚡️ MESL, ⚡️ XMRth, deleted nodes, or self-reference)
+    outboundsList = outboundsList.filter(target => {
+      if (!target || target.trim() === grp.name) return false;
+      const t = target.trim();
+      return validGroupTags.has(t) || validNodeTags.has(t) || isBuiltinSingboxOutbound(t);
+    });
+
+    // Deduplicate while preserving order
+    outboundsList = Array.from(new Set(outboundsList));
 
     // ALWAYS ensure outboundsList is not empty to prevent "missing tags" error in Sing-box
     if (outboundsList.length === 0) {
@@ -611,6 +670,12 @@ export function injectUnifiedToLoon(
   const remoteRules = activeRules.filter(r => r.kind === 'remote');
   const localRules = activeRules.filter(r => r.kind === 'local');
 
+  const effectiveGroups: ProxyGroupItem[] = proxyGroups.map(g => ({
+    ...g,
+    proxies: g.proxies ? [...g.proxies] : undefined,
+    use: g.use ? [...g.use] : undefined,
+  }));
+
   const networkSources = sources.filter(s => s.enabled && s.type !== 'custom' && s.url && s.url.startsWith('http'));
   const customNodes = nodes.filter(n => n.sourceId === 'custom' || !n.sourceId);
   const customNodeNames = customNodes.map(n => n.name.replace(/[=,]/g, '_'));
@@ -641,7 +706,7 @@ export function injectUnifiedToLoon(
   // 2. Build [Remote Filter] (Regex / region filters for subscription nodes)
   const filterMap = new Map<string, string>();
   if (!expandNodes) {
-    proxyGroups.forEach(grp => {
+    effectiveGroups.forEach(grp => {
       if (grp.filter) {
         const filterTag = getLoonFilterTag(grp);
         filterMap.set(filterTag, grp.filter);
@@ -665,10 +730,10 @@ export function injectUnifiedToLoon(
     sourceGroupTags.push('⚡️ 独立节点组');
   }
 
-  const existingGroupNames = new Set(proxyGroups.map(g => g.name.toLowerCase()));
+  const existingGroupNames = new Set(effectiveGroups.map(g => g.name.toLowerCase()));
   const groupLines: string[] = [];
 
-  proxyGroups.forEach(grp => {
+  effectiveGroups.forEach(grp => {
     if (grp.type === 'direct') {
       groupLines.push(`${grp.name} = select, DIRECT`);
       return;
@@ -754,7 +819,7 @@ export function injectUnifiedToLoon(
     // If main selector (🚀 节点选择), ensure source groups are prepended
     if (grp.name === '🚀 节点选择') {
       sourceGroupTags.forEach(st => {
-        if (!proxies.includes(st)) {
+        if (effectiveGroups.some(g => g.name === st) && !proxies.includes(st)) {
           proxies.unshift(st);
         }
       });
@@ -776,15 +841,30 @@ export function injectUnifiedToLoon(
         } else {
           const matched = sourceGroupTags.find(st => st.replace(/^[⚡️\s]+/, '').trim().toLowerCase() === cleanU);
           const tagToAdd = matched || (u.startsWith('⚡️') ? u : `⚡️ ${u}`);
-          if (!proxies.includes(tagToAdd)) {
+          if (effectiveGroups.some(g => g.name === tagToAdd) && !proxies.includes(tagToAdd)) {
             proxies.unshift(tagToAdd);
           }
         }
       });
     }
 
+    // Prune dangling references in Loon
+    const validGroupNames = new Set(effectiveGroups.map(g => g.name));
+    const validNodeNames = new Set(nodes.map(n => n.name.replace(/[=,]/g, '_')));
+    const validSubTags = new Set(sourceGroupTags.concat(networkSources.map(s => s.name.replace(/[=,]/g, '_'))));
+    const isBuiltinLoonProxy = (t: string) => {
+      const upper = t.trim().toUpperCase();
+      return upper === 'DIRECT' || upper === 'REJECT' || upper === '全部节点' || t.trim() === '🎯 本地直连';
+    };
+
+    proxies = proxies.filter(p => {
+      if (!p || p.trim() === grp.name) return false;
+      const t = p.trim();
+      return validGroupNames.has(t) || validNodeNames.has(t) || validSubTags.has(t) || isBuiltinLoonProxy(t);
+    });
+
     if (proxies.length === 0) {
-      proxies = ['全部节点', 'DIRECT'];
+      proxies = ['DIRECT'];
     }
 
     groupLines.push(`${grp.name} = ${groupType}, ${proxies.join(', ')}`);

@@ -286,11 +286,35 @@ async function getEffectiveNodesForProfile(profile: SubscriptionProfile): Promis
 }
 
 function getEffectiveGroupsForProfile(profile: SubscriptionProfile): ProxyGroupItem[] {
+  let groups: ProxyGroupItem[];
   if (Array.isArray(profile.selectedGroupIds) && profile.selectedGroupIds.length > 0) {
     const set = new Set(profile.selectedGroupIds);
-    return appConfig.proxyGroups.filter(g => set.has(g.id));
+    groups = appConfig.proxyGroups.filter(g => set.has(g.id));
+  } else {
+    groups = appConfig.proxyGroups;
   }
-  return appConfig.proxyGroups;
+  return groups.map(g => ({
+    ...g,
+    proxies: g.proxies ? [...g.proxies] : undefined,
+    use: g.use ? [...g.use] : undefined,
+  }));
+}
+
+function getEffectiveSourcesForProfile(profile?: SubscriptionProfile, effectiveNodes?: ProxyNode[]): SubscriptionSource[] {
+  if (!profile) return appConfig.sources;
+  const usedSourceIds = new Set<string>();
+  if (Array.isArray(effectiveNodes)) {
+    effectiveNodes.forEach(n => {
+      if (n.sourceId) usedSourceIds.add(n.sourceId);
+    });
+  }
+  if (Array.isArray(profile.nodeFilter?.sourceIds) && profile.nodeFilter.sourceIds.length > 0) {
+    profile.nodeFilter.sourceIds.forEach(id => usedSourceIds.add(id));
+  }
+  if (usedSourceIds.size > 0) {
+    return appConfig.sources.filter(s => usedSourceIds.has(s.id) || (s.id === 'custom' && usedSourceIds.has('custom')));
+  }
+  return appConfig.sources;
 }
 
 function getEffectiveRulesForProfile(profile: SubscriptionProfile): UnifiedRuleItem[] {
@@ -1027,14 +1051,18 @@ app.post('/api/generate/preview', async (req, res) => {
       templateContent = defaultTpl?.content || '';
     }
 
+    const effectiveSources = targetProfile
+      ? getEffectiveSourcesForProfile(targetProfile, nodes)
+      : appConfig.sources;
+
     let output = '';
     if (targetType === 'mihomo') {
-      output = generateMihomoConfig(templateContent, nodes, groups, rules, appConfig.sources);
+      output = generateMihomoConfig(templateContent, nodes, groups, rules, effectiveSources);
     } else if (targetType === 'singbox') {
       output = generateSingboxConfig(templateContent, nodes, groups, rules);
     } else if (targetType === 'loon') {
       const expand = Boolean(req.body?.expandNodes || req.query?.expand === 'true' || req.query?.expand === '1');
-      output = generateLoonConfig(templateContent, nodes, groups, rules, appConfig.sources, { expandNodes: expand });
+      output = generateLoonConfig(templateContent, nodes, groups, rules, effectiveSources, { expandNodes: expand });
     }
 
     res.json({ success: true, nodeCount: nodes.length, data: output });
@@ -1078,9 +1106,10 @@ async function handlePrivateSubRequest(req: express.Request, res: express.Respon
     const nodes = await getEffectiveNodesForProfile(profile);
     const groups = getEffectiveGroupsForProfile(profile);
     const rules = getEffectiveRulesForProfile(profile);
+    const sources = getEffectiveSourcesForProfile(profile, nodes);
 
     if (detectedType === 'mihomo') {
-      const output = generateMihomoConfig(templateContent, nodes, groups, rules, appConfig.sources);
+      const output = generateMihomoConfig(templateContent, nodes, groups, rules, sources);
       res.setHeader('Content-Type', 'text/yaml; charset=utf-8');
       res.setHeader('subscription-userinfo', 'upload=0; download=0; total=1073741824000; expire=0');
       return res.send(output);
@@ -1094,7 +1123,7 @@ async function handlePrivateSubRequest(req: express.Request, res: express.Respon
 
     if (detectedType === 'loon') {
       const expand = req.query.expand === 'true' || req.query.expand === '1' || req.query.node_list === 'true';
-      const output = generateLoonConfig(templateContent, nodes, groups, rules, appConfig.sources, { expandNodes: expand });
+      const output = generateLoonConfig(templateContent, nodes, groups, rules, sources, { expandNodes: expand });
       res.setHeader('Content-Type', 'text/plain; charset=utf-8');
       return res.send(output);
     }
