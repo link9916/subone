@@ -8,8 +8,9 @@
 - **多订阅分流配置（多 Profile）**：
   - 支持创建多个独立订阅，每个订阅拥有专属的 Token 链接；
   - 自由定制每个订阅包含的节点（国家/关键字初筛 + 手动勾选）、启用的策略组、分流规则以及绑定的客户端配置模版；
-- **多节点聚合**：
-  - 将零散的节点聚合，支持单条/批量 URI、Clash YAML、Sing-box JSON 格式录入与智能解析；
+- **多机场与多节点聚合**：
+  - 支持导入机场订阅，提取其中的节点，根据国家或者关键字进行筛选分组；
+  - 支持添加零散的节点，支持单条/批量 URI、Clash YAML、Sing-box JSON 格式录入与智能解析；
 - **协议与支持**：
   - **支持导入解析**：VLESS (Reality/Vision/gRPC/WS)、VMess、Shadowsocks (SS 2022/AEAD)、Trojan、Hysteria 2、TUIC v5、AnyTLS、WireGuard、Snell (v1~v4)、SOCKS5、HTTP、v2rayn 等协议。
   - **支持输入格式**：URI 链接列表、Base64 订阅、Clash/Mihomo YAML、Sing-box JSON。
@@ -39,14 +40,13 @@
 ```json
 {
   "port": 3456,
-  "adminPassword": "YOUR_ADMIN_PASSWORD",
-  "subToken": "a3f89b1c2d4e5f60718293a4b5c6d7e8"
+  "adminPassword": "YOUR_ADMIN_PASSWORD"
 }
 ```
 
 - `port`: 服务监听端口，默认 `3456`。
 - `adminPassword`: Web 控制台管理密码。若留空或未设置，则不启用登录鉴权。
-- `subToken`: 订阅路径的访问密钥。若未填写，服务首次启动时会自动生成 32 位随机字符串并写入此文件。
+
 
 业务数据（订阅源、自建节点、策略组、分流规则、模板等）保存在 `data/subone_config.json` 中，由管理后台自动维护。
 
@@ -55,7 +55,6 @@
 也可直接通过环境变量配置：
 - `PORT`
 - `ADMIN_PASSWORD`
-- `SUB_TOKEN`
 
 ## 部署
 
@@ -107,7 +106,7 @@ systemctl enable --now subone
 systemctl status subone
 
 # 查看实时日志
-journalctl -u subone -f
+journalctl -u subone -e -f
 
 # 重启 / 停止服务
 systemctl restart subone
@@ -129,16 +128,3 @@ sub.yourdomain.com {
 caddy reload
 ```
 
-## 订阅链接
-
-每个订阅均拥有专属的独立 Token，支持通用自适应链接与各类客户端专用链接：
-
-| 用途 | 请求路径 | 说明 |
-| :--- | :--- | :--- |
-| **通用自适应订阅** | `/s/<Token>` | 根据客户端 User-Agent 智能识别输出；若无 UA 标识（如浏览器或通用抓取）**默认输出 Sing-box 格式** |
-| **指定 Sing-box 格式** | `/s/<Token>?target=singbox` 或 `/s/<Token>/singbox` | 输出 Sing-box JSON 完整配置 |
-| **指定 Mihomo 格式** | `/s/<Token>?target=mihomo` 或 `/s/<Token>/mihomo` | 输出 Mihomo / ShellCrash YAML 格式配置 |
-| **指定 Loon 格式** | `/s/<Token>?target=loon` 或 `/s/<Token>/loon` | 输出 Loon Conf 格式配置 |
-| **临时指定模版** | `/s/<Token>?template=<模版ID>` | 临时覆盖订阅默认绑定的模版渲染输出 |
-
-> **提示**：在 Web 管理首页的各订阅卡片中，点击对应客户端按钮即可一键复制对应的完整链接或生成专属二维码扫码导入。

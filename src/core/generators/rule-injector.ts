@@ -50,11 +50,19 @@ export function injectUnifiedToMihomo(
     }
     networkSources.forEach(s => {
       const providerKey = s.name.trim();
+      // Only sanitize characters truly illegal in cross-platform file paths (\ / : * ? " < > | \r \n \t)
+      // Preserves Chinese, Unicode, alphanumeric characters, hyphens, and underscores safely.
+      const safePathName = providerKey
+        .replace(/^[⚡️🚀👉♻️🌐📹✈️🤖🇨🇳🇭🇰🇯🇵🇺🇸🏮🇸🇬\s]+/u, '')
+        .replace(/[\\/:*?"<>|\r\n\t]/g, '_')
+        .replace(/\.{2,}/g, '_')
+        .trim() || s.id || 'provider';
+
       doc['proxy-providers'][providerKey] = {
         type: 'http',
         url: s.url,
         interval: 86400,
-        path: `./proxy_providers/${providerKey.replace(/[^a-zA-Z0-9_-]/g, '_')}.yaml`,
+        path: `./proxy_providers/${safePathName}.yaml`,
         'health-check': {
           enable: true,
           url: 'https://www.gstatic.com/generate_204',
