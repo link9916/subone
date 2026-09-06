@@ -906,17 +906,17 @@ app.put('/api/templates/:id', (req, res) => {
 app.post('/api/templates/:id/reset', (req, res) => {
   const index = appConfig.templates.findIndex(t => t.id === req.params.id);
   if (index === -1) {
-    return res.status(404).json({ success: false, message: 'Template not found' });
+    return res.status(404).json({ success: false, message: '模版未找到' });
   }
   const tpl = appConfig.templates[index];
-  const defaultTpl = INITIAL_TEMPLATES.find(t => t.type === tpl.type);
+  const defaultTpl = INITIAL_TEMPLATES.find(t => t.type?.toLowerCase() === tpl.type?.toLowerCase());
   if (defaultTpl) {
     tpl.content = defaultTpl.content;
     appConfig.templates[index] = tpl;
     saveConfig(appConfig);
     return res.json({ success: true, data: tpl });
   }
-  res.status(404).json({ success: false, message: 'Default template not found' });
+  res.status(404).json({ success: false, message: `未找到类型为 ${tpl.type} 的内置默认模版` });
 });
 
 app.delete('/api/templates/:id', (req, res) => {

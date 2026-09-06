@@ -341,6 +341,16 @@ export function App() {
     if (res.ok) await fetchData();
   };
 
+  const handleResetTemplate = async (id: string): Promise<ConfigTemplate> => {
+    const res = await apiFetch(`${API_BASE}/templates/${id}/reset`, { method: 'POST' });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.success) {
+      throw new Error(json.message || json.error || '恢复默认模版失败');
+    }
+    await fetchData();
+    return json.data;
+  };
+
   const handlePreview = async (templateId?: string, customTemplate?: string, customType?: string) => {
     const res = await apiFetch(`${API_BASE}/generate/preview`, {
       method: 'POST',
@@ -454,6 +464,7 @@ export function App() {
             onAddTemplate={handleAddTemplate}
             onUpdateTemplate={handleUpdateTemplate}
             onDeleteTemplate={handleDeleteTemplate}
+            onResetTemplate={handleResetTemplate}
             onPreview={handlePreview}
           />
         )}

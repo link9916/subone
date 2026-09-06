@@ -20,6 +20,7 @@ interface TemplateEditorProps {
   onAddTemplate: (template: Partial<ConfigTemplate>) => Promise<void>;
   onUpdateTemplate: (id: string, updates: Partial<ConfigTemplate>) => Promise<void>;
   onDeleteTemplate: (id: string) => Promise<void>;
+  onResetTemplate: (id: string) => Promise<ConfigTemplate>;
   onPreview: (templateId?: string, customTemplate?: string, customType?: string) => Promise<{ nodeCount: number; data: string }>;
 }
 
@@ -28,6 +29,7 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({
   onAddTemplate,
   onUpdateTemplate,
   onDeleteTemplate,
+  onResetTemplate,
   onPreview,
 }) => {
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(templates[0]?.id || '');
@@ -72,18 +74,17 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({
 
   const handleResetTemplate = async () => {
     if (!currentTemplate) return;
-    if (!window.confirm(`确定要将当前模版重置为系统最新的默认配置吗？`)) return;
+    if (!window.confirm(`确定要将当前模版「${currentTemplate.name}」恢复为系统内置的默认配置吗？`)) return;
     setIsSaving(true);
     try {
-      const res = await fetch(`/api/templates/${currentTemplate.id}/reset`, { method: 'POST' });
-      const data = await res.json();
-      if (data.success && data.data) {
-        setTemplateContent(data.data.content);
-        await onUpdateTemplate(currentTemplate.id, { content: data.data.content });
-        await handleRefreshPreview(currentTemplate.id, data.data.content, currentTemplate.type);
+      const resetTpl = await onResetTemplate(currentTemplate.id);
+      if (resetTpl?.content) {
+        setTemplateContent(resetTpl.content);
+        await handleRefreshPreview(resetTpl.id, resetTpl.content, resetTpl.type);
       }
-    } catch (err) {
-      alert('重置失败');
+    } catch (err: any) {
+      console.error('handleResetTemplate error:', err);
+      alert(err.message || '重置失败');
     } finally {
       setIsSaving(false);
     }
