@@ -6,12 +6,10 @@ import { NodesViewer } from './components/NodesViewer';
 import { GroupsManager } from './components/GroupsManager';
 import { RulesManager } from './components/RulesManager';
 import { TemplateEditor } from './components/TemplateEditor';
-import { DnsManager } from './components/DnsManager';
 import { SettingsModal } from './components/SettingsModal';
 import { LoginView } from './components/LoginView';
 import {
   AppConfig,
-  AppDnsConfig,
   ProxyNode,
   SubscriptionSource,
   ExtractionRule,
@@ -24,7 +22,8 @@ import {
 const API_BASE = '/api';
 
 export function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'sources' | 'nodes' | 'groups' | 'rules' | 'dns' | 'templates'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'sources' | 'nodes' | 'groups' | 'rules' | 'templates'>('dashboard');
+
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [nodes, setNodes] = useState<ProxyNode[]>([]);
   const [showSettings, setShowSettings] = useState(false);
@@ -317,22 +316,8 @@ export function App() {
     if (res.ok) await fetchData();
   };
 
-  // DNS handlers
-  const handleSaveDnsConfig = async (dnsConfig: AppDnsConfig) => {
-    const res = await apiFetch(`${API_BASE}/dns`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(dnsConfig),
-    });
-    if (res.ok) await fetchData();
-  };
-
-  const handleResetDnsConfig = async () => {
-    const res = await apiFetch(`${API_BASE}/dns/reset`, { method: 'POST' });
-    if (res.ok) await fetchData();
-  };
-
   // Templates handlers
+
   const handleAddTemplate = async (template: Partial<ConfigTemplate>) => {
     const res = await apiFetch(`${API_BASE}/templates`, {
       method: 'POST',
@@ -368,7 +353,7 @@ export function App() {
   };
 
   // Settings handlers
-  const handleSaveSettings = async (settings: { subToken?: string; defaultClient?: 'singbox' | 'mihomo' | 'loon' }) => {
+  const handleSaveSettings = async (settings: { subToken?: string }) => {
     const res = await apiFetch(`${API_BASE}/config/settings`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -412,6 +397,7 @@ export function App() {
             config={config}
             nodes={nodes}
             onNavigateTab={setActiveTab}
+            onRefreshConfig={fetchData}
           />
         )}
 
@@ -462,14 +448,6 @@ export function App() {
           />
         )}
 
-        {activeTab === 'dns' && config && (
-          <DnsManager
-            dnsConfig={config.dnsConfig}
-            onSaveDns={handleSaveDnsConfig}
-            onResetDns={handleResetDnsConfig}
-          />
-        )}
-
         {activeTab === 'templates' && config && (
           <TemplateEditor
             templates={config.templates || []}
@@ -479,15 +457,14 @@ export function App() {
             onPreview={handlePreview}
           />
         )}
+
       </main>
 
       {showSettings && config && (
         <SettingsModal
           config={config}
           onClose={() => setShowSettings(false)}
-          onSaveSettings={handleSaveSettings}
           onChangePassword={handleChangePassword}
-          onRegenerateSubToken={handleRegenerateSubToken}
         />
       )}
     </div>

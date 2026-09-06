@@ -164,6 +164,35 @@ export interface CountryPatternRule {
   groupName?: string; // e.g. "🇭🇰 香港节点"
 }
 
+export interface ProfileNodeFilter {
+  mode?: 'all' | 'filter' | 'manual';
+  sourceIds?: string[];
+  countryCodes?: string[];
+  includeKeywords?: string[];
+  excludeKeywords?: string[];
+  includeRegex?: string;
+  excludeRegex?: string;
+  selectedNodeIds?: string[]; // Specifically chosen node IDs
+}
+
+export interface SubscriptionProfile {
+  id: string;
+  name: string;
+  token: string;
+  enabled: boolean;
+  description?: string;
+  nodeFilter: ProfileNodeFilter;
+  selectedGroupIds?: string[];
+  selectedRuleIds?: string[];
+  templates?: {
+    mihomo?: string;
+    singbox?: string;
+    loon?: string;
+  };
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface AppConfig {
   sources: SubscriptionSource[];
   rules: ExtractionRule[];
@@ -171,12 +200,12 @@ export interface AppConfig {
   templates: ConfigTemplate[];
   proxyGroups: ProxyGroupItem[];
   rulesList: UnifiedRuleItem[];
-  dnsConfig?: string; // Unified DNS JSON/YAML configuration
+  profiles: SubscriptionProfile[];
   settings: {
     token?: string; // legacy token support if any
     subToken?: string; // secret random token in url e.g. /s/:subToken
     adminPassword?: string; // admin dashboard password
     port?: number;
-    defaultClient?: 'singbox' | 'mihomo' | 'loon';
   };
 }
+

@@ -9,18 +9,20 @@ import {
   ProxyGroupItem,
   UnifiedRuleItem,
   CountryPatternRule,
+  SubscriptionProfile,
 } from '../types/index.js';
 import {
   INITIAL_TEMPLATES,
   INITIAL_PROXY_GROUPS,
   INITIAL_RULES_LIST,
   INITIAL_COUNTRY_RULES,
-  DEFAULT_DNS_CONFIG,
+  INITIAL_PROFILES,
   DEFAULT_SINGBOX_TEMPLATE,
   DEFAULT_MIHOMO_TEMPLATE,
   DEFAULT_LOON_TEMPLATE,
 } from './default-templates.js';
 import { aggregateRules } from '../core/parser/rules-parser.js';
+
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 const DATA_CONFIG_FILE = path.join(DATA_DIR, 'subone_data.json');
@@ -166,6 +168,17 @@ export function loadConfig(): AppConfig {
         }
       });
 
+      let profiles: SubscriptionProfile[] = [];
+      if (Array.isArray(parsed.profiles) && parsed.profiles.length > 0) {
+        profiles = parsed.profiles;
+      } else {
+        const defaultProfile: SubscriptionProfile = {
+          ...INITIAL_PROFILES[0],
+          token: generateRandomSubToken(),
+        };
+        profiles = [defaultProfile];
+      }
+
       const config: AppConfig = {
         sources,
         rules: Array.isArray(parsed.rules) ? parsed.rules : [],
@@ -173,13 +186,12 @@ export function loadConfig(): AppConfig {
         templates,
         proxyGroups,
         rulesList,
-        dnsConfig: typeof parsed.dnsConfig === 'string' ? parsed.dnsConfig : DEFAULT_DNS_CONFIG,
+        profiles,
         settings: {
           token: parsed.settings?.token || undefined,
           subToken: serverConfig.subToken,
           adminPassword: serverConfig.adminPassword,
           port: serverConfig.port,
-          defaultClient: parsed.settings?.defaultClient || 'mihomo',
         },
       };
 
@@ -200,6 +212,11 @@ export function loadConfig(): AppConfig {
     }
   ];
 
+  const defaultProfile: SubscriptionProfile = {
+    ...INITIAL_PROFILES[0],
+    token: generateRandomSubToken(),
+  };
+
   const initialConfig: AppConfig = {
     sources: defaultSources,
     rules: defaultRules,
@@ -207,12 +224,11 @@ export function loadConfig(): AppConfig {
     templates: INITIAL_TEMPLATES,
     proxyGroups: INITIAL_PROXY_GROUPS,
     rulesList: INITIAL_RULES_LIST,
-    dnsConfig: DEFAULT_DNS_CONFIG,
+    profiles: [defaultProfile],
     settings: {
       subToken: serverConfig.subToken,
       adminPassword: serverConfig.adminPassword,
       port: serverConfig.port,
-      defaultClient: 'mihomo',
     }
   };
 
@@ -237,10 +253,8 @@ export function saveConfig(config: AppConfig): void {
       templates: config.templates,
       proxyGroups: config.proxyGroups,
       rulesList: config.rulesList,
-      dnsConfig: config.dnsConfig || DEFAULT_DNS_CONFIG,
-      settings: {
-        defaultClient: config.settings.defaultClient || 'mihomo',
-      }
+      profiles: config.profiles,
+      settings: {}
     };
 
     fs.writeFileSync(DATA_CONFIG_FILE, JSON.stringify(cleanToPersist, null, 2), 'utf-8');
@@ -248,3 +262,4 @@ export function saveConfig(config: AppConfig): void {
     console.error('Failed to save config to data/subone_data.json:', err);
   }
 }
+

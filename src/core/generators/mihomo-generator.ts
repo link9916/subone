@@ -1,5 +1,6 @@
 import yaml from 'js-yaml';
-import { ProxyNode, ProxyGroupItem, UnifiedRuleItem } from '../../types/index.js';
+import { ProxyNode, ProxyGroupItem, UnifiedRuleItem, SubscriptionSource } from '../../types/index.js';
+
 import { injectUnifiedToMihomo } from './rule-injector.js';
 
 export function nodeToMihomoProxy(node: ProxyNode): any {
@@ -160,8 +161,7 @@ export function generateMihomoConfig(
   nodes: ProxyNode[],
   proxyGroups: ProxyGroupItem[] = [],
   rulesList: UnifiedRuleItem[] = [],
-  sources: SubscriptionSource[] = [],
-  dnsConfig?: any
+  sources: SubscriptionSource[] = []
 ): string {
   let doc: any;
   try {
@@ -182,7 +182,7 @@ export function generateMihomoConfig(
   doc.proxies = nodesToWrite.map(nodeToMihomoProxy);
 
   // 2. Inject Proxy Groups & Unified Rules & Proxy Providers & DNS
-  doc = injectUnifiedToMihomo(doc, nodes, proxyGroups, rulesList, sources, dnsConfig);
+  doc = injectUnifiedToMihomo(doc, nodes, proxyGroups, rulesList, sources);
 
   return yaml.dump(doc, {
     indent: 2,
@@ -190,4 +190,5 @@ export function generateMihomoConfig(
     noRefs: true,
   });
 }
+
 

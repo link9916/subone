@@ -178,8 +178,7 @@ export function generateSingboxConfig(
   templateJson: string,
   nodes: ProxyNode[],
   proxyGroups: ProxyGroupItem[] = [],
-  rulesList: UnifiedRuleItem[] = [],
-  dnsConfig?: any
+  rulesList: UnifiedRuleItem[] = []
 ): string {
   let doc: any;
   try {
@@ -193,7 +192,8 @@ export function generateSingboxConfig(
 
   const proxyOutbounds = nodes.map(nodeToSingboxOutbound);
 
-  doc = injectUnifiedToSingbox(doc, proxyOutbounds, proxyGroups, rulesList, dnsConfig);
+  doc = injectUnifiedToSingbox(doc, proxyOutbounds, proxyGroups, rulesList);
 
   return JSON.stringify(doc, null, 2);
 }
+

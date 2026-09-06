@@ -1,4 +1,5 @@
-import { CountryPatternRule, ProxyNode } from '../../types/index.js';
+import { CountryPatternRule, ProxyNode, ProxyType } from '../../types/index.js';
+
 import { detectCountry } from './country.js';
 
 function decodeBase64Safe(str: string): string {
@@ -647,10 +648,13 @@ function parseV2rayN(uri: string, index: number, countryPatterns?: CountryPatter
     node.presharedKey = extra.PresharedKey || undefined;
     if (extra.LocalAddress) {
       node.localAddress = Array.isArray(extra.LocalAddress) ? extra.LocalAddress : [extra.LocalAddress];
-      const pure = String(node.localAddress[0]).split('/')[0];
-      if (pure.includes(':')) node.ipv6 = pure;
-      else node.ip = pure;
+      if (node.localAddress && node.localAddress.length > 0) {
+        const pure = String(node.localAddress[0]).split('/')[0];
+        if (pure.includes(':')) node.ipv6 = pure;
+        else node.ip = pure;
+      }
     }
+
     node.mtu = extra.Mtu ? parseInt(String(extra.Mtu), 10) : undefined;
     node.reserved = extra.Reserved || undefined;
     node.udp = true;

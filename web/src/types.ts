@@ -99,11 +99,33 @@ export interface CountryPatternRule {
   groupName?: string;
 }
 
-export interface AppDnsConfig {
-  rawFormat: 'json' | 'yaml';
-  rawText: string;
-  singbox?: Record<string, any>;
-  clash?: Record<string, any>;
+export interface ProfileNodeFilter {
+  mode?: 'all' | 'filter' | 'manual';
+  sourceIds?: string[];
+  countryCodes?: string[];
+  includeKeywords?: string[];
+  excludeKeywords?: string[];
+  includeRegex?: string;
+  excludeRegex?: string;
+  selectedNodeIds?: string[];
+}
+
+export interface SubscriptionProfile {
+  id: string;
+  name: string;
+  token: string;
+  enabled: boolean;
+  description?: string;
+  nodeFilter: ProfileNodeFilter;
+  selectedGroupIds?: string[];
+  selectedRuleIds?: string[];
+  templates?: {
+    mihomo?: string;
+    singbox?: string;
+    loon?: string;
+  };
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface AppConfig {
@@ -113,13 +135,13 @@ export interface AppConfig {
   templates: ConfigTemplate[];
   proxyGroups: ProxyGroupItem[];
   rulesList: UnifiedRuleItem[];
-  dnsConfig?: AppDnsConfig;
+  profiles: SubscriptionProfile[];
   settings: {
     token?: string;
     subToken?: string;
     adminPassword?: string;
     port?: number;
-    defaultClient?: 'singbox' | 'mihomo' | 'loon';
   };
 }
+
 

@@ -39,15 +39,18 @@ export function parseSingboxJson(
       if (ob.local_address) {
         const rawAddrs = Array.isArray(ob.local_address) ? ob.local_address : [ob.local_address];
         localAddress = rawAddrs.map((a: any) => String(a).trim()).filter(Boolean);
-        localAddress.forEach(addr => {
-          const pure = addr.split('/')[0];
-          if (pure.includes(':') && !ipv6) {
-            ipv6 = pure;
-          } else if (!ip) {
-            ip = pure;
-          }
-        });
+        if (localAddress) {
+          localAddress.forEach(addr => {
+            const pure = addr.split('/')[0];
+            if (pure.includes(':') && !ipv6) {
+              ipv6 = pure;
+            } else if (!ip) {
+              ip = pure;
+            }
+          });
+        }
       }
+
 
       const node: ProxyNode = {
         id: `singbox-${sourceId || 'src'}-${idx}-${ob.server}-${ob.server_port}`,

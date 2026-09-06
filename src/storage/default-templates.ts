@@ -212,59 +212,22 @@ export const INITIAL_TEMPLATES: ConfigTemplate[] = [
   },
 ];
 
-export const DEFAULT_DNS_CONFIG = JSON.stringify({
-  "servers": [
-    {
-      "tag": "alidns",
-      "type": "udp",
-      "server": "223.5.5.5"
+export const INITIAL_PROFILES: import('../types/index.js').SubscriptionProfile[] = [
+  {
+    id: 'prof_default',
+    name: '默认全量订阅',
+    token: '',
+    enabled: true,
+    description: '包含所有可用节点、标准策略组与分流规则的完整配置',
+    nodeFilter: {
+      mode: 'all',
+      selectedNodeIds: [],
     },
-    {
-      "tag": "remote",
-      "type": "https",
-      "server": "1.1.1.1",
-      "path": "/dns-query",
-      "detour": "🚀 节点选择"
-    },
-    {
-      "tag": "fakeip",
-      "type": "fakeip",
-      "inet4_range": "198.18.0.0/15"
-    },
-    {
-      "tag": "system",
-      "type": "local"
-    }
-  ],
-  "rules": [
-    {
-      "domain_suffix": [
-        "local",
-        "arpa",
-        "in-addr.arpa",
-        "ip6.arpa",
-        "gstatic.com",
-        "gvt1.com",
-        "cp.cloudflare.com"
-      ],
-      "server": "alidns"
-    },
-    {
-      "query_type": "AAAA",
-      "action": "reject"
-    },
-    {
-      "clash_mode": "Direct",
-      "server": "alidns"
-    },
-    {
-      "clash_mode": "Global",
-      "server": "remote"
-    }
-  ],
-  "final": "remote",
-  "strategy": "prefer_ipv4"
-}, null, 2);
+    selectedGroupIds: [],
+    selectedRuleIds: [],
+  },
+];
+
 
 export const INITIAL_PROXY_GROUPS: ProxyGroupItem[] = [
   {

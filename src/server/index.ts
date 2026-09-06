@@ -25,8 +25,11 @@ import {
   UnifiedRuleItem,
   CountryPatternRule,
   SubscriptionSource,
+  SubscriptionProfile,
 } from '../types/index.js';
-import { INITIAL_COUNTRY_RULES } from '../storage/default-templates.js';
+
+import { INITIAL_COUNTRY_RULES, INITIAL_TEMPLATES } from '../storage/default-templates.js';
+
 
 const app = express();
 let appConfig: AppConfig = loadConfig();
@@ -231,23 +234,90 @@ async function getEffectiveNodes(): Promise<ProxyNode[]> {
   return applyExtractionRules(globalNodesCache, appConfig.rules);
 }
 
+// Compute effective nodes for a specific profile (combining rules and manual selection)
+async function getEffectiveNodesForProfile(profile: SubscriptionProfile): Promise<ProxyNode[]> {
+  const allNodes = await getEffectiveNodes();
+  const filter = profile.nodeFilter || { mode: 'all' };
+
+  let filtered = allNodes;
+
+  // 1. Source filter
+  if (Array.isArray(filter.sourceIds) && filter.sourceIds.length > 0) {
+    const srcSet = new Set(filter.sourceIds);
+    filtered = filtered.filter(n => srcSet.has(n.sourceId || 'custom'));
+  }
+
+  // 2. Country filter
+  if (Array.isArray(filter.countryCodes) && filter.countryCodes.length > 0) {
+    const countrySet = new Set(filter.countryCodes.map(c => c.toUpperCase()));
+    filtered = filtered.filter(n => n.countryCode && countrySet.has(n.countryCode.toUpperCase()));
+  }
+
+  // 3. Keywords filter
+  if (Array.isArray(filter.includeKeywords) && filter.includeKeywords.length > 0) {
+    filtered = filtered.filter(n => filter.includeKeywords!.some(kw => n.name.toLowerCase().includes(kw.toLowerCase())));
+  }
+  if (Array.isArray(filter.excludeKeywords) && filter.excludeKeywords.length > 0) {
+    filtered = filtered.filter(n => !filter.excludeKeywords!.some(kw => n.name.toLowerCase().includes(kw.toLowerCase())));
+  }
+
+  // 4. Regex filter
+  if (filter.includeRegex) {
+    try {
+      const reg = new RegExp(filter.includeRegex, 'i');
+      filtered = filtered.filter(n => reg.test(n.name));
+    } catch {}
+  }
+  if (filter.excludeRegex) {
+    try {
+      const reg = new RegExp(filter.excludeRegex, 'i');
+      filtered = filtered.filter(n => !reg.test(n.name));
+    } catch {}
+  }
+
+  // 5. Manual / selectedNodeIds filter:
+  // If user selected explicit nodes, only keep those
+  if (Array.isArray(filter.selectedNodeIds) && filter.selectedNodeIds.length > 0) {
+    const selSet = new Set(filter.selectedNodeIds);
+    filtered = filtered.filter(n => selSet.has(n.id));
+  }
+
+  return filtered;
+}
+
+function getEffectiveGroupsForProfile(profile: SubscriptionProfile): ProxyGroupItem[] {
+  if (Array.isArray(profile.selectedGroupIds) && profile.selectedGroupIds.length > 0) {
+    const set = new Set(profile.selectedGroupIds);
+    return appConfig.proxyGroups.filter(g => set.has(g.id));
+  }
+  return appConfig.proxyGroups;
+}
+
+function getEffectiveRulesForProfile(profile: SubscriptionProfile): UnifiedRuleItem[] {
+  if (Array.isArray(profile.selectedRuleIds) && profile.selectedRuleIds.length > 0) {
+    const set = new Set(profile.selectedRuleIds);
+    return appConfig.rulesList.filter(r => set.has(r.id));
+  }
+  return appConfig.rulesList;
+}
+
+function getEffectiveTemplateForProfile(profile: SubscriptionProfile, clientType: ClientType): ConfigTemplate | undefined {
+  const customTplId = profile.templates?.[clientType];
+  if (customTplId) {
+    const found = appConfig.templates.find(t => t.id === customTplId);
+    if (found) return found;
+  }
+  return appConfig.templates.find(t => t.type === clientType && t.isDefault) || appConfig.templates.find(t => t.type === clientType);
+}
+
 // ================= API ROUTES ================= //
 
 // 1. Config & Settings
 app.get('/api/config', (req, res) => {
   ensureCustomSource(appConfig);
-  const currentDns = appConfig.dnsConfig || DEFAULT_DNS_CONFIG;
-  const configData = {
-    ...appConfig,
-    dnsConfig: typeof currentDns === 'string'
-      ? {
-          rawText: currentDns,
-          rawFormat: currentDns.trim().startsWith('{') ? 'json' : 'yaml',
-        }
-      : currentDns,
-  };
-  res.json({ success: true, data: configData });
+  res.json({ success: true, data: appConfig });
 });
+
 
 app.post('/api/config/settings', (req, res) => {
   const { settings } = req.body;
@@ -834,36 +904,109 @@ app.delete('/api/templates/:id', (req, res) => {
   res.json({ success: true, message: 'Template deleted' });
 });
 
-// 7.5 Global DNS Configuration
-app.get('/api/dns', (req, res) => {
-  const currentDns = appConfig.dnsConfig || DEFAULT_DNS_CONFIG;
-  res.json({
-    success: true,
-    data: {
-      rawText: currentDns,
-      rawFormat: currentDns.trim().startsWith('{') ? 'json' : 'yaml',
-    },
-  });
+// 7. Profiles Management (多订阅中心)
+app.get('/api/profiles', (req, res) => {
+  res.json({ success: true, data: appConfig.profiles || [] });
 });
 
-app.put('/api/dns', (req, res) => {
-  const raw = typeof req.body?.rawText === 'string' ? req.body.rawText : (typeof req.body === 'string' ? req.body : JSON.stringify(req.body, null, 2));
-  appConfig.dnsConfig = raw;
+
+app.post('/api/profiles', (req, res) => {
+  const { name, description, nodeFilter, selectedGroupIds, selectedRuleIds, templates } = req.body;
+  if (!name || typeof name !== 'string' || !name.trim()) {
+    return res.status(400).json({ success: false, message: '订阅名称不能为空' });
+  }
+
+  const newProfile: SubscriptionProfile = {
+    id: `prof_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`,
+    name: name.trim(),
+    token: generateRandomSubToken(),
+    enabled: true,
+    description: description?.trim(),
+    nodeFilter: nodeFilter || { mode: 'all', selectedNodeIds: [] },
+    selectedGroupIds: Array.isArray(selectedGroupIds) ? selectedGroupIds : [],
+    selectedRuleIds: Array.isArray(selectedRuleIds) ? selectedRuleIds : [],
+    templates: templates || {},
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  appConfig.profiles = appConfig.profiles || [];
+  appConfig.profiles.push(newProfile);
   saveConfig(appConfig);
-  res.json({ success: true, data: appConfig.dnsConfig });
+  res.json({ success: true, data: newProfile });
 });
 
-app.post('/api/dns/reset', (req, res) => {
-  appConfig.dnsConfig = DEFAULT_DNS_CONFIG;
+app.put('/api/profiles/:id', (req, res) => {
+  const { id } = req.params;
+  const index = (appConfig.profiles || []).findIndex(p => p.id === id);
+  if (index === -1) {
+    return res.status(404).json({ success: false, message: 'Profile not found' });
+  }
+
+  const existing = appConfig.profiles[index];
+  const { name, description, enabled, nodeFilter, selectedGroupIds, selectedRuleIds, templates } = req.body;
+
+  appConfig.profiles[index] = {
+    ...existing,
+    name: typeof name === 'string' && name.trim() ? name.trim() : existing.name,
+    description: description !== undefined ? description : existing.description,
+    enabled: enabled !== undefined ? Boolean(enabled) : existing.enabled,
+    nodeFilter: nodeFilter !== undefined ? nodeFilter : existing.nodeFilter,
+    selectedGroupIds: Array.isArray(selectedGroupIds) ? selectedGroupIds : existing.selectedGroupIds,
+    selectedRuleIds: Array.isArray(selectedRuleIds) ? selectedRuleIds : existing.selectedRuleIds,
+    templates: templates !== undefined ? templates : existing.templates,
+    updatedAt: new Date().toISOString(),
+  };
+
   saveConfig(appConfig);
-  res.json({ success: true, data: appConfig.dnsConfig });
+  res.json({ success: true, data: appConfig.profiles[index] });
+});
+
+app.delete('/api/profiles/:id', (req, res) => {
+  const { id } = req.params;
+  if (!appConfig.profiles || appConfig.profiles.length <= 1) {
+    return res.status(400).json({ success: false, message: '请至少保留一个订阅配置' });
+  }
+  appConfig.profiles = appConfig.profiles.filter(p => p.id !== id);
+  saveConfig(appConfig);
+  res.json({ success: true, message: '订阅已删除' });
+});
+
+app.post('/api/profiles/:id/refresh-token', (req, res) => {
+  const { id } = req.params;
+  const profile = (appConfig.profiles || []).find(p => p.id === id);
+  if (!profile) {
+    return res.status(404).json({ success: false, message: 'Profile not found' });
+  }
+  profile.token = generateRandomSubToken();
+  profile.updatedAt = new Date().toISOString();
+  saveConfig(appConfig);
+  res.json({ success: true, data: profile });
 });
 
 // 8. Live Preview
 app.post('/api/generate/preview', async (req, res) => {
   try {
-    const { templateId, customTemplate, customType } = req.body;
-    const nodes = await getEffectiveNodes();
+    const { templateId, customTemplate, customType, profileId, profile: previewProfile } = req.body;
+
+    let targetProfile: SubscriptionProfile | undefined;
+    if (profileId) {
+      targetProfile = (appConfig.profiles || []).find(p => p.id === profileId);
+    } else if (previewProfile) {
+      targetProfile = previewProfile;
+    }
+
+    const nodes = targetProfile
+      ? await getEffectiveNodesForProfile(targetProfile)
+      : await getEffectiveNodes();
+
+    const groups = targetProfile
+      ? getEffectiveGroupsForProfile(targetProfile)
+      : appConfig.proxyGroups;
+
+    const rules = targetProfile
+      ? getEffectiveRulesForProfile(targetProfile)
+      : appConfig.rulesList;
 
     let targetType: ClientType = customType || 'singbox';
     let templateContent = customTemplate;
@@ -874,6 +1017,9 @@ app.post('/api/generate/preview', async (req, res) => {
         targetType = found.type;
         if (!templateContent) templateContent = found.content;
       }
+    } else if (targetProfile) {
+      const tpl = getEffectiveTemplateForProfile(targetProfile, targetType);
+      if (tpl && !templateContent) templateContent = tpl.content;
     }
 
     if (!templateContent) {
@@ -883,12 +1029,12 @@ app.post('/api/generate/preview', async (req, res) => {
 
     let output = '';
     if (targetType === 'mihomo') {
-      output = generateMihomoConfig(templateContent, nodes, appConfig.proxyGroups, appConfig.rulesList, appConfig.sources, appConfig.dnsConfig);
+      output = generateMihomoConfig(templateContent, nodes, groups, rules, appConfig.sources);
     } else if (targetType === 'singbox') {
-      output = generateSingboxConfig(templateContent, nodes, appConfig.proxyGroups, appConfig.rulesList, appConfig.dnsConfig);
+      output = generateSingboxConfig(templateContent, nodes, groups, rules);
     } else if (targetType === 'loon') {
       const expand = Boolean(req.body?.expandNodes || req.query?.expand === 'true' || req.query?.expand === '1');
-      output = generateLoonConfig(templateContent, nodes, appConfig.proxyGroups, appConfig.rulesList, appConfig.sources, { expandNodes: expand });
+      output = generateLoonConfig(templateContent, nodes, groups, rules, appConfig.sources, { expandNodes: expand });
     }
 
     res.json({ success: true, nodeCount: nodes.length, data: output });
@@ -901,10 +1047,15 @@ app.post('/api/generate/preview', async (req, res) => {
 
 async function handlePrivateSubRequest(req: express.Request, res: express.Response, forcedType?: ClientType) {
   const tokenParam = req.params.subToken;
-  const secretToken = appConfig.settings.subToken;
 
-  // Strict silent 404 if token missing or mismatched
-  if (!secretToken || tokenParam !== secretToken) {
+  if (!tokenParam) {
+    res.removeHeader('X-Powered-By');
+    return res.status(404).type('text/plain').send('404 Not Found');
+  }
+
+  // Find profile by token
+  const profile = (appConfig.profiles || []).find(p => p.token === tokenParam && p.enabled !== false);
+  if (!profile) {
     res.removeHeader('X-Powered-By');
     return res.status(404).type('text/plain').send('404 Not Found');
   }
@@ -912,7 +1063,7 @@ async function handlePrivateSubRequest(req: express.Request, res: express.Respon
   try {
     const queryTarget = (req.query.target as string) || (req.query.type as string) || (req.params.target as string);
     const userAgent = req.headers['user-agent'];
-    const detectedType = forcedType || detectClientType(userAgent, queryTarget, appConfig.settings.defaultClient || 'mihomo');
+    const detectedType = forcedType || detectClientType(userAgent, queryTarget, 'singbox');
 
     let tpl: ConfigTemplate | undefined;
     const tplId = req.query.template as string;
@@ -920,28 +1071,30 @@ async function handlePrivateSubRequest(req: express.Request, res: express.Respon
       tpl = appConfig.templates.find(t => t.id === tplId || t.name === tplId);
     }
     if (!tpl) {
-      tpl = appConfig.templates.find(t => t.type === detectedType && t.isDefault) || appConfig.templates.find(t => t.type === detectedType);
+      tpl = getEffectiveTemplateForProfile(profile, detectedType);
     }
 
     const templateContent = tpl?.content || '';
-    const nodes = await getEffectiveNodes();
+    const nodes = await getEffectiveNodesForProfile(profile);
+    const groups = getEffectiveGroupsForProfile(profile);
+    const rules = getEffectiveRulesForProfile(profile);
 
     if (detectedType === 'mihomo') {
-      const output = generateMihomoConfig(templateContent, nodes, appConfig.proxyGroups, appConfig.rulesList, appConfig.sources, appConfig.dnsConfig);
+      const output = generateMihomoConfig(templateContent, nodes, groups, rules, appConfig.sources);
       res.setHeader('Content-Type', 'text/yaml; charset=utf-8');
       res.setHeader('subscription-userinfo', 'upload=0; download=0; total=1073741824000; expire=0');
       return res.send(output);
     }
 
     if (detectedType === 'singbox') {
-      const output = generateSingboxConfig(templateContent, nodes, appConfig.proxyGroups, appConfig.rulesList, appConfig.dnsConfig);
+      const output = generateSingboxConfig(templateContent, nodes, groups, rules);
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       return res.send(output);
     }
 
     if (detectedType === 'loon') {
       const expand = req.query.expand === 'true' || req.query.expand === '1' || req.query.node_list === 'true';
-      const output = generateLoonConfig(templateContent, nodes, appConfig.proxyGroups, appConfig.rulesList, appConfig.sources, { expandNodes: expand });
+      const output = generateLoonConfig(templateContent, nodes, groups, rules, appConfig.sources, { expandNodes: expand });
       res.setHeader('Content-Type', 'text/plain; charset=utf-8');
       return res.send(output);
     }
@@ -964,6 +1117,7 @@ app.get('/s/:subToken/:target', (req, res) => {
   }
   return handlePrivateSubRequest(req, res);
 });
+
 
 // Legacy /sub routes return silent 404
 app.all('/sub', (req, res) => {

@@ -5,6 +5,9 @@
 
 ## ✨ 主要特性
 
+- **多订阅分流配置（多 Profile）**：
+  - 支持创建多个独立订阅，每个订阅拥有专属的 Token 链接；
+  - 自由定制每个订阅包含的节点（国家/关键字初筛 + 手动勾选）、启用的策略组、分流规则以及绑定的客户端配置模版；
 - **多机场订阅聚合**：
   - 将多个机场的订阅链接聚合，自动拉取节点，并按国旗/地区自动分类，可自定义正则过滤分类；
 - **多节点聚合**：
@@ -13,14 +16,15 @@
   - **支持导入解析**：VLESS (Reality/Vision/gRPC/WS)、VMess、Shadowsocks (SS 2022/AEAD)、Trojan、Hysteria 2、TUIC v5、AnyTLS、WireGuard、Snell (v1~v4)、SOCKS5、HTTP、v2rayn 等协议。
   - **支持输入格式**：URI 链接列表、Base64 订阅、Clash/Mihomo YAML、Sing-box JSON。
 - **策略组**：
-  - 所见即所得（尽力）的策略组编辑器，支持选择节点组、展开节点、地区正则筛选、多级嵌套；
-- **分流规则**  
-  - 本地规则，添加 CIDR，DOMAIN，DOMAIN-SUFFIX，DOMAIN-KEYWORD；
-  - 远程规则集，添加远程的（GeoSite / GeoIP / SRS / MRS 规则集），并管理去向。
+  - 所见即所得的策略组配置，支持节点筛选、多级嵌套；
+  - 内置**安全回退保护机制**，避免分流规则引用的策略组未启用时导致客户端报错崩溃；
+- **分流规则**：
+  - 本地规则：CIDR、DOMAIN、DOMAIN-SUFFIX、DOMAIN-KEYWORD 等；
+  - 远程规则集：GeoSite / GeoIP / SRS / MRS 规则集统一管理与去向分流；
 - **模板与智能下发**：
-  - 系统默认作了3个模版，设置好的节点、Provider、策略组与分流规则，自动按模板结构注入；
-  - 可以自定义模板，加入自定的规则；
-  - 根据客户端 User-Agent 自动识别并返回对应客户端格式，或通过 `target` 参数显式指定。
+  - 默认提供 Sing-box、Mihomo 与 Loon 的标准模版，DNS 及高级核心策略直接在模版中灵活掌控；
+  - 每个订阅可为不同客户端绑定专属模版；
+  - 根据客户端 User-Agent 智能下发对应格式，无 UA 时默认下发 Sing-box 格式，亦可通过 URL 显式指定。
 
 ### 📊 协议转换支持
 
@@ -149,10 +153,14 @@ caddy reload
 
 ## 订阅链接
 
+每个订阅均拥有专属的独立 Token，支持通用自适应链接与各类客户端专用链接：
+
 | 用途 | 请求路径 | 说明 |
 | :--- | :--- | :--- |
-| 自动识别客户端 | `/s/<subToken>` | 根据客户端 User-Agent 自动返回 Mihomo、Sing-box 或 Loon 格式 |
-| 指定 Mihomo 格式 | `/s/<subToken>?target=mihomo` | 输出 Mihomo YAML 配置 |
-| 指定 Sing-box 格式 | `/s/<subToken>?target=singbox` | 输出 Sing-box JSON 配置 |
-| 指定 Loon 格式 | `/s/<subToken>?target=loon` | 输出 Loon 配置 |
-| 指定模板渲染 | `/s/<subToken>?template=<模版ID>` | 使用指定模板渲染输出 |
+| **通用自适应订阅** | `/s/<Token>` | 根据客户端 User-Agent 智能识别输出；若无 UA 标识（如浏览器或通用抓取）**默认输出 Sing-box 格式** |
+| **指定 Sing-box 格式** | `/s/<Token>?target=singbox` 或 `/s/<Token>/singbox` | 输出 Sing-box JSON 完整配置 |
+| **指定 Mihomo 格式** | `/s/<Token>?target=mihomo` 或 `/s/<Token>/mihomo` | 输出 Mihomo / ShellCrash YAML 格式配置 |
+| **指定 Loon 格式** | `/s/<Token>?target=loon` 或 `/s/<Token>/loon` | 输出 Loon Conf 格式配置 |
+| **临时指定模版** | `/s/<Token>?template=<模版ID>` | 临时覆盖订阅默认绑定的模版渲染输出 |
+
+> **提示**：在 Web 管理首页的各订阅卡片中，点击对应客户端按钮即可一键复制对应的完整链接或生成专属二维码扫码导入。

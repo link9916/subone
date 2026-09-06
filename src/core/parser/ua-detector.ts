@@ -3,7 +3,7 @@ export type ClientType = 'singbox' | 'mihomo' | 'loon';
 export function detectClientType(
   userAgent: string | undefined,
   queryTarget: string | undefined,
-  defaultType: ClientType = 'mihomo'
+  defaultType: ClientType = 'singbox'
 ): ClientType {
   // 1. Explicit query parameter has highest priority
   if (queryTarget) {

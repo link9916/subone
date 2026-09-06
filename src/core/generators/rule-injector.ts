@@ -7,26 +7,20 @@ import {
   formatRuleTag,
 } from './ruleset-adapter.js';
 
-export function parseDnsConfig(dnsConfig?: any): any {
-  if (!dnsConfig) return null;
-  if (typeof dnsConfig === 'string') {
-    try {
-      const trimmed = dnsConfig.trim();
-      return trimmed.startsWith('{') ? JSON.parse(trimmed) : yaml.load(trimmed);
-    } catch {
-      return null;
-    }
+export function resolveSafeOutbound(target: string, availableGroups: Set<string>, fallback: string): string {
+  const t = (target || '').trim();
+  if (!t) return fallback;
+  const upper = t.toUpperCase();
+  if (upper === 'DIRECT' || upper === 'REJECT' || upper === 'GLOBAL' || upper === 'PASS' || t === '🎯 本地直连' || t === 'dns-out') {
+    return t;
   }
-  if (typeof dnsConfig === 'object') {
-    if (dnsConfig.rawText) {
-      try {
-        const trimmed = dnsConfig.rawText.trim();
-        return trimmed.startsWith('{') ? JSON.parse(trimmed) : yaml.load(trimmed);
-      } catch {}
-    }
-    return dnsConfig.singbox || dnsConfig.clash || dnsConfig;
+  if (availableGroups.has(t)) {
+    return t;
   }
-  return null;
+  for (const g of availableGroups) {
+    if (g.toLowerCase() === t.toLowerCase()) return g;
+  }
+  return fallback;
 }
 
 export function injectUnifiedToMihomo(
@@ -34,35 +28,13 @@ export function injectUnifiedToMihomo(
   nodes: ProxyNode[],
   proxyGroups: ProxyGroupItem[],
   rulesList: UnifiedRuleItem[],
-  sources: SubscriptionSource[] = [],
-  dnsConfig?: any
+  sources: SubscriptionSource[] = []
 ): any {
+
   if (!doc || typeof doc !== 'object') doc = {};
 
-  const customDns = parseDnsConfig(dnsConfig);
-  if (customDns) {
-    if (customDns.nameserver || customDns.fallback || customDns['default-nameserver'] || customDns['enhanced-mode']) {
-      doc.dns = { ...(doc.dns || {}), ...customDns };
-    } else if (Array.isArray(customDns.servers)) {
-      // Translate Singbox-style servers into Mihomo DNS if needed
-      const alidns = customDns.servers.find((s: any) => s.tag === 'alidns' || s.server === '223.5.5.5')?.server || '223.5.5.5';
-      const remoteDns = customDns.servers.find((s: any) => s.tag === 'remote' || s.type === 'https')?.server || '1.1.1.1';
-      doc.dns = {
-        enable: true,
-        'prefer-h3': false,
-        'use-hosts': true,
-        'use-system-hosts': true,
-        'respect-rules': true,
-        'enhanced-mode': 'fake-ip',
-        'fake-ip-range': '198.18.0.0/15',
-        'default-nameserver': [alidns, '119.29.29.29'],
-        nameserver: [`https://${alidns}/dns-query`, `https://${remoteDns}/dns-query`],
-        fallback: [`https://${remoteDns}/dns-query`, 'tls://1.1.1.1:853'],
-      };
-    }
-  }
-
   const networkSources = sources.filter(s => s.enabled && s.type !== 'custom' && s.url && s.url.startsWith('http'));
+
   const customNodes = nodes.filter(n => n.sourceId === 'custom' || !n.sourceId);
   const customNodeNames = customNodes.map(n => n.name);
   const allNodeNames = nodes.map(n => n.name);
@@ -191,23 +163,28 @@ export function injectUnifiedToMihomo(
   }
 
   // 3. Build Rules
+  const availableGroupNames = new Set((doc['proxy-groups'] || []).map((g: any) => g.name));
+  const fallbackGroup = (doc['proxy-groups'] || []).find((g: any) => g.name === '🚀 节点选择')?.name || doc['proxy-groups']?.[0]?.name || 'DIRECT';
+
   const generatedRules: string[] = [];
   localRules.forEach(r => {
+    const safeOutbound = resolveSafeOutbound(r.outbound, availableGroupNames, fallbackGroup);
     if (r.type === 'FINAL') {
       // final rule at the end
     } else if (r.payload.includes(',')) {
       r.payload.split(',').forEach(p => {
         const item = p.trim();
-        if (item) generatedRules.push(`${r.type},${item},${r.outbound}`);
+        if (item) generatedRules.push(`${r.type},${item},${safeOutbound}`);
       });
     } else {
-      generatedRules.push(`${r.type},${r.payload},${r.outbound}`);
+      generatedRules.push(`${r.type},${r.payload},${safeOutbound}`);
     }
   });
 
   remoteRules.forEach((r, idx) => {
     const tag = formatRuleTag(r, idx);
-    generatedRules.push(`RULE-SET,${tag},${r.outbound}`);
+    const safeOutbound = resolveSafeOutbound(r.outbound, availableGroupNames, fallbackGroup);
+    generatedRules.push(`RULE-SET,${tag},${safeOutbound}`);
   });
 
   // Default fallback
@@ -217,28 +194,15 @@ export function injectUnifiedToMihomo(
   return doc;
 }
 
+
 export function injectUnifiedToSingbox(
   doc: any,
   proxyOutbounds: any[],
   proxyGroups: ProxyGroupItem[],
-  rulesList: UnifiedRuleItem[],
-  dnsConfig?: any
+  rulesList: UnifiedRuleItem[]
 ): any {
   if (!doc.route) doc.route = {};
   if (!doc.outbounds) doc.outbounds = [];
-
-  const customDns = parseDnsConfig(dnsConfig);
-  if (customDns && typeof customDns === 'object') {
-    doc.dns = doc.dns || {};
-    if (Array.isArray(customDns.servers)) {
-      doc.dns.servers = customDns.servers;
-    }
-    if (customDns.strategy) doc.dns.strategy = customDns.strategy;
-    if (customDns.final) doc.dns.final = customDns.final;
-    if (customDns.independent_cache !== undefined) doc.dns.independent_cache = customDns.independent_cache;
-    if (customDns.reverse_mapping !== undefined) doc.dns.reverse_mapping = customDns.reverse_mapping;
-    if (customDns.fakeip !== undefined) doc.dns.fakeip = customDns.fakeip;
-  }
 
   // 1. Build Custom Proxy Groups (Selectors / URLTest)
   const allNodeTags = proxyOutbounds.map(p => p.tag);
@@ -478,26 +442,12 @@ export function injectUnifiedToSingbox(
       .map(ad => ad.tag)
       .filter(tag => validRuleSetTags.has(tag));
 
-    const dnsRules: any[] = [];
+    // If template already defines dns.rules, respect user template and avoid overriding
+    if (doc.dns && Array.isArray(doc.dns.rules) && doc.dns.rules.length > 0) {
+      // Keep template rules intact
+    } else {
+      const dnsRules: any[] = [];
 
-    // Step A0: User-custom direct DNS rules from dnsConfig (e.g. ads rejection, custom domain->system / alidns)
-    if (customDns && Array.isArray(customDns.rules)) {
-      customDns.rules.forEach((cr: any) => {
-        if (cr.query_type === 'AAAA' || cr.clash_mode) return;
-        if (cr.rule_set) {
-          const ruleSetList = Array.isArray(cr.rule_set) ? cr.rule_set : [cr.rule_set];
-          // Filter out rule sets that are not declared in route.rule_set or are IP-based (geoip) to prevent Sing-box crash
-          const validList = ruleSetList.filter((rsTag: string) => validRuleSetTags.has(rsTag) && !rsTag.startsWith('geoip'));
-          if (validList.length === 0) return;
-          dnsRules.push({
-            ...cr,
-            rule_set: Array.isArray(cr.rule_set) ? validList : validList[0],
-          });
-          return;
-        }
-        dnsRules.push(cr);
-      });
-    }
 
     // Step A: Direct local domains -> alidns (resolves both IPv4 and full IPv6 without being rejected)
     const uniqueDirectSuffixes = Array.from(new Set([
@@ -548,6 +498,7 @@ export function injectUnifiedToSingbox(
     dnsRules.push({ clash_mode: 'Global', server: 'remote' });
 
     doc.dns.rules = dnsRules;
+    }
   }
 
   // 3. Build Route Rules
@@ -575,28 +526,34 @@ export function injectUnifiedToSingbox(
     { ip_is_private: true, outbound: '🎯 本地直连' },
   ];
 
+  const availableGroupNames = new Set(effectiveGroups.map(g => g.name));
+  const fallbackGroup = effectiveGroups.find(g => g.name === '🚀 节点选择')?.name || effectiveGroups[0]?.name || '🎯 本地直连';
+
   localRules.forEach(r => {
     const payloads = r.payload.split(/[,;\n]+/).map(s => s.trim()).filter(Boolean);
+    const safeOutbound = resolveSafeOutbound(r.outbound, availableGroupNames, fallbackGroup);
     if (r.type === 'DOMAIN-SUFFIX') {
-      routeRules.push({ domain_suffix: payloads, outbound: r.outbound });
+      routeRules.push({ domain_suffix: payloads, outbound: safeOutbound });
     } else if (r.type === 'DOMAIN-KEYWORD') {
-      routeRules.push({ domain_keyword: payloads, outbound: r.outbound });
+      routeRules.push({ domain_keyword: payloads, outbound: safeOutbound });
     } else if (r.type === 'DOMAIN') {
-      routeRules.push({ domain: payloads, outbound: r.outbound });
+      routeRules.push({ domain: payloads, outbound: safeOutbound });
     } else if (r.type === 'IP-CIDR') {
-      routeRules.push({ ip_cidr: payloads, outbound: r.outbound });
+      routeRules.push({ ip_cidr: payloads, outbound: safeOutbound });
     } else if (r.type === 'GEOIP') {
-      routeRules.push({ geoip: payloads, outbound: r.outbound });
+      routeRules.push({ geoip: payloads, outbound: safeOutbound });
     }
   });
 
   remoteRules.forEach((r, idx) => {
     const tag = formatRuleTag(r, idx);
+    const safeOutbound = resolveSafeOutbound(r.outbound, availableGroupNames, fallbackGroup);
     routeRules.push({
       rule_set: tag,
-      outbound: r.outbound,
+      outbound: safeOutbound,
     });
   });
+
 
   doc.route.rules = routeRules;
   doc.route.final = '🐟 漏网之鱼';
@@ -728,19 +685,20 @@ export function injectUnifiedToLoon(
           .filter(n => n.sourceName === matchedSource.name || n.sourceId === matchedSource.id)
           .map(n => n.name.replace(/[=,]/g, '_'));
         const members = srcNodes.length > 0 ? srcNodes : ['DIRECT'];
-        if (groupType === 'url-test' || groupType === 'urltest') {
+        if (groupType === 'url-test') {
           groupLines.push(`${grp.name} = url-test, ${members.join(', ')}, url=https://www.gstatic.com/generate_204, interval=300, tolerance=${grp.tolerance || 50}`);
         } else {
           groupLines.push(`${grp.name} = select, ${members.join(', ')}`);
         }
       } else {
         const sTag = matchedSource.name.replace(/[=,]/g, '_').trim();
-        if (groupType === 'url-test' || groupType === 'urltest') {
+        if (groupType === 'url-test') {
           groupLines.push(`${grp.name} = url-test, ${sTag}, url=https://www.gstatic.com/generate_204, interval=300, tolerance=${grp.tolerance || 50}`);
         } else {
           groupLines.push(`${grp.name} = select, ${sTag}`);
         }
       }
+
       return;
     }
 
@@ -814,17 +772,23 @@ export function injectUnifiedToLoon(
   }
 
   // 4. Build [Rule]
+  const availableGroupNames = new Set(effectiveGroups.map(g => g.name));
+  const fallbackGroup = effectiveGroups.find(g => g.name === '🚀 节点选择')?.name || effectiveGroups[0]?.name || 'DIRECT';
+
   const localRuleLines = localRules.flatMap(r => {
     const payloads = r.payload.split(/[,;\n]+/).map(p => p.trim()).filter(Boolean);
-    return payloads.map(p => `${r.type},${p},${r.outbound}`);
+    const safeOutbound = resolveSafeOutbound(r.outbound, availableGroupNames, fallbackGroup);
+    return payloads.map(p => `${r.type},${p},${safeOutbound}`);
   });
 
   // 5. Build [Remote Rule]
   const remoteRuleLines = remoteRules.map((r, idx) => {
     const adapted = adaptRulesetForLoon(r, idx);
     const tag = r.name.replace(/[=,]/g, '_');
-    return `${adapted.url}, policy=${r.outbound}, tag=${tag}, enabled=true`;
+    const safeOutbound = resolveSafeOutbound(r.outbound, availableGroupNames, fallbackGroup);
+    return `${adapted.url}, policy=${safeOutbound}, tag=${tag}, enabled=true`;
   });
+
 
   const result: string[] = [];
   let hasHandledRemoteProxy = false;
