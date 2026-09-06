@@ -543,55 +543,55 @@ export function injectUnifiedToSingbox(
       const dnsRules: any[] = [];
 
 
-    // Step A: Direct local domains -> alidns (resolves both IPv4 and full IPv6 without being rejected)
-    const uniqueDirectSuffixes = Array.from(new Set([
-      'local',
-      'arpa',
-      'in-addr.arpa',
-      'ip6.arpa',
-      'gstatic.com',
-      'gvt1.com',
-      'cp.cloudflare.com',
-      ...directDomainSuffixes,
-    ]));
-    dnsRules.push({
-      domain_suffix: uniqueDirectSuffixes,
-      server: 'alidns',
-    });
-
-    // Step B: Domestic GeoSite rule-sets -> alidns (allows full dual-stack IPv4/IPv6 for domestic services)
-    if (domesticRuleSets.length > 0) {
+      // Step A: Direct local domains -> alidns (resolves both IPv4 and full IPv6 without being rejected)
+      const uniqueDirectSuffixes = Array.from(new Set([
+        'local',
+        'arpa',
+        'in-addr.arpa',
+        'ip6.arpa',
+        'gstatic.com',
+        'gvt1.com',
+        'cp.cloudflare.com',
+        ...directDomainSuffixes,
+      ]));
       dnsRules.push({
-        rule_set: domesticRuleSets,
+        domain_suffix: uniqueDirectSuffixes,
         server: 'alidns',
       });
-    }
 
-    // Step C: Reject AAAA for overseas / proxy traffic (prevents proxy IPv6 leaks & broken overseas IPv6 routes)
-    dnsRules.push({
-      query_type: 'AAAA',
-      action: 'reject',
-    });
+      // Step B: Domestic GeoSite rule-sets -> alidns (allows full dual-stack IPv4/IPv6 for domestic services)
+      if (domesticRuleSets.length > 0) {
+        dnsRules.push({
+          rule_set: domesticRuleSets,
+          server: 'alidns',
+        });
+      }
 
-    // Step D: Proxy GeoSite rule-sets -> fakeip
-    if (proxyRuleSets.length > 0) {
+      // Step C: Reject AAAA for overseas / proxy traffic (prevents proxy IPv6 leaks & broken overseas IPv6 routes)
       dnsRules.push({
-        rule_set: proxyRuleSets,
+        query_type: 'AAAA',
+        action: 'reject',
+      });
+
+      // Step D: Proxy GeoSite rule-sets -> fakeip
+      if (proxyRuleSets.length > 0) {
+        dnsRules.push({
+          rule_set: proxyRuleSets,
+          server: 'fakeip',
+        });
+      }
+
+      // Step E: Overseas keywords -> fakeip
+      dnsRules.push({
+        domain_keyword: ['antigravity', 'perplexity', 'youtube', 'google'],
         server: 'fakeip',
       });
-    }
 
-    // Step E: Overseas keywords -> fakeip
-    dnsRules.push({
-      domain_keyword: ['antigravity', 'perplexity', 'youtube', 'google'],
-      server: 'fakeip',
-    });
+      // Step F: Clash API controls
+      dnsRules.push({ clash_mode: 'Direct', server: 'alidns' });
+      dnsRules.push({ clash_mode: 'Global', server: 'remote' });
 
-    // Step F: Clash API controls
-    dnsRules.push({ clash_mode: 'Direct', server: 'alidns' });
-    dnsRules.push({ clash_mode: 'Global', server: 'remote' });
-
-    doc.dns.rules = dnsRules;
+      doc.dns.rules = dnsRules;
     }
   }
 
@@ -616,6 +616,13 @@ export function injectUnifiedToSingbox(
         { protocol: 'stun' },
       ],
       action: 'reject',
+    },
+    {
+      "ip_cidr": [
+        "172.19.0.0/30",
+        "fdfe:dcba:9876::/126"
+      ],
+      "action": "reject"
     },
     { ip_is_private: true, outbound: '🎯 本地直连' },
   ];
